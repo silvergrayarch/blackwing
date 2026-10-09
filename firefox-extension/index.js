@@ -4,13 +4,29 @@ let auth_token = null;
 
 async function init()
 {
-    await load_filters();
-    const results = await load_results();
-    if (Object.keys(results).length > 0) 
-    {
-        render_streams(results, document.getElementById("results"));
-    }
-    document.getElementById("run_button").addEventListener("click", run);
+    const test_element = document.getElementById("test");
+
+    const ops = [
+        {
+            extensions: {
+                persistedQuery: {
+                    sha256Hash: "f3c5d45175d623ed3d5ff4ca4c7de379ea6a1a4852236087dc1b81b7dbfd3114",
+                    version: 1
+                }
+            },
+            operationName: "FollowingGames_CurrentUser",
+            variables: {
+                limit: 30,
+                type: "LIVE"
+            }
+        }
+    ];
+    const gql_data = await gql_request(ops);
+
+    test_element.textContent = JSON.stringify(gql_data[0]);
+
+    load_live_followed_channels();
+    document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
 }
 
 async function get_auth_token()
@@ -41,11 +57,102 @@ async function gql_request(operations)
             "Content-Type": "application/json",
             "Accept": "application/json"
         },
-        body: JSON.stringify({ operations })
+        body: JSON.stringify(operations)
     });
 
     if (!response.ok) throw new Error(`GQL request failed: ${response.status}`);
     return response.json();
+}
+
+async function load_live_followed_channels()
+{
+
+    const followed_live_channels = document.getElementById("live-followed-channels");
+
+    const operations = [
+        {
+            extensions: {
+                persistedQuery: {
+                    sha256Hash: "bbfa83064e90280dce3eaa9de3a18eb6647505546336313241afdf569b6b34b6",
+                    version: 1
+                }
+            },
+            operationName: "FollowingLive_CurrentUser",
+            variables: {
+                imageWidth: 50,
+                includeCostreaming: true,
+                limit: 30
+            }
+        }
+    ];
+    const gql_data = await gql_request(operations);
+    const edges = gql_data[0].data.currentUser.followedLiveUsers.edges;
+
+    for (const edge of edges)
+    {
+        const node = edge.node;
+        const stream_card = document.createElement("div");
+        stream_card.className = "stream-card";
+
+        const preview_image_wrapper = document.createElement("div");
+        preview_image_wrapper.className = "preview-image";
+
+        const preview_image = document.createElement("img");
+        preview_image.src = node.stream.previewImageURL;
+
+        preview_image_wrapper.appendChild(preview_image);
+        stream_card.appendChild(preview_image_wrapper);
+
+        const profile_image_wrapper = document.createElement("div");
+        profile_image_wrapper.className = "profile-image"
+
+        const profile_image = document.createElement("img");
+        profile_image.src = node.profileImageURL;
+
+        profile_image_wrapper.appendChild(profile_image);
+        stream_card.appendChild(profile_image_wrapper);
+
+        const title = document.createElement("div");
+        title.className = "title";
+
+        title.textContent = node.stream.title;
+        stream_card.appendChild(title);
+
+        const username = document.createElement("div");
+        username.className = "username";
+
+        username.textContent = node.displayName;
+        stream_card.appendChild(username);
+
+        const category = document.createElement("div");
+        category.className = "category";
+
+        category.textContent = node.stream.game.displayName;
+        stream_card.appendChild(category);
+
+        const tags = document.createElement("div");
+        tags.className = "tags";
+
+        for (const freeform_tag of node.stream.freeformTags)
+        {
+            const tag = document.createElement("div");
+            tag.className = "tag";
+
+            tag.textContent = freeform_tag.name;
+            tags.appendChild(tag);
+        }
+
+        stream_card.appendChild(tags);
+
+        const open = document.createElement("a");
+        open.className = "open";
+        open.href = `https://www.twitch.tv/${node.login}`;
+        open.textContent = "Open Stream";
+
+        stream_card.appendChild(open);
+
+        followed_live_channels.appendChild(stream_card);
+    }
 }
 
 //PYTHON def join_set(s: set | None) -> str: return ", ".join(sorted(s)) if s else ""
@@ -216,102 +323,12 @@ async function process_card(card, filters)
     catch (e) { throw e; }
 }
 
-async function fetch_streams(category, filters)
+async function toggle_settings_menu()
 {
-    const streams = {};
-    let current_page = 1;
-    while (true)
-    {
-        const params = new URLSearchParams({ "broadcaster_languages[]": "EN", "page": current_page });
-
-        if (filters.max_viewers) { params.append("viewers_max", filters.max_viewers); }
-        if (category) { params.append("games[]", category); }
-
-        const response = await fetch(`https://twitch-tools.rootonline.de/channel_previews.php?${params.toString()}`,
-            {
-                headers:
-                {
-                    "user-agent": "Mozilla/5.0",
-                    "accept-language": "en-US,en;q=0.9"
-                }
-            }
-        );
-
-        const response_text = await response.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(response_text, "text/html");
-        const cards = [...doc.querySelectorAll("div.card-block")];
-
-        if (cards.length === 0) { break; }
-
-        const card_promises = cards.map(card => process_card(card, filters));
-        const results = await Promise.all(card_promises);
-
-        for (const result of results) 
-        {
-            if (result) 
-            {
-                result.category = category;
-                streams[result.id] = result;
-            }
-        }
-
-        current_page++;
-    }
-
-    return streams;
-}
-
-async function run()
-{
-    const run_button = document.getElementById("run_button");
-    run_button.disabled = true;
-
-    try
-    {
-        const filters = get_filters();
-        await save_filters(filters);
-
-        const results_container = document.getElementById("results");
-        results_container.innerHTML = "";
-
-        let all_streams = {};
-
-        for (const category of filters.categories) 
-        {
-            const streams = await fetch_streams(category, filters);
-            all_streams = { ...all_streams, ...streams };
-        }
-
-        await save_results(all_streams);
-        render_streams(all_streams, results_container);
-    }
-    finally { run_button.disabled = false; }
-}
-
-function render_streams(streams, container)
-{
-    container.innerHTML = "";
-
-    for (const stream of Object.values(streams))
-    {
-        const card = document.createElement("div");
-        card.className = "stream-card";
-
-        const tags_html = stream.tags.map(tag => `<div class="tag">${tag}</div>`).join("");
-
-        card.innerHTML = `
-        <div class="category">${stream.category}</div>
-        <div class="title">${stream.title}</div>
-        <div class="username">${stream.username}</div>
-        <div class="stats">Viewers: ${stream.viewers.toLocaleString()}</div>
-        <div class="stats">Followers: ${stream.followers.toLocaleString()}</div>
-        <div class="tags">${tags_html}</div>
-        <a class="open" href="${stream.link}" target="_blank" rel="noopener noreferrer">Open stream</a>
-        `;
-
-        container.appendChild(card);
-    }
+    const front_page = document.getElementById("front-page");
+    const settings_page = document.getElementById("settings-page");
+    front_page.hidden = !front_page.hidden;
+    settings_page.hidden = !settings_page.hidden;
 }
 
 // function escape_html(str) {
