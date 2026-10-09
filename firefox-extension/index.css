@@ -50,10 +50,17 @@ main {
     padding: 16px;
 }
 
+.segment-title {
+    margin: 0px;
+    color: var(--purple-1);
+}
+
 #live-followed-channels {
     gap: 8px;
     display: flex;
     flex-wrap: wrap;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--gray-3);
 }
 
 .stream-card {

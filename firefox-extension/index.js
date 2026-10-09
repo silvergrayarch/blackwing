@@ -19,11 +19,46 @@ async function init()
                 limit: 30,
                 type: "LIVE"
             }
+        },
+        {
+
+            extensions: {
+                persistedQuery: {
+                    sha256Hash: "86bcceb4e8b1a51256ff8eed8bd8aae4acacf80d737efe904f84f3aeadf8cafd",
+                    version: 1
+                }
+            },
+            operationName: "DirectoryPage_Game",
+            variables: {
+                imageWidth: 50,
+                includeCostreaming: true,
+                limit: 30,
+                options: {
+                    broadcasterLanguages: [
+                        "EN"
+                    ],
+                    freeformTags: null,
+                    includeRestricted: [
+                        "SUB_ONLY_LIVE"
+                    ],
+                    recommendationsContext: {
+                        platform: "web"
+                    },
+                    requestID: "JIRA-VXP-2397",
+                    sort: "VIEWER_COUNT_ASC",
+                    systemFilters: [],
+                    tags: []
+                },
+                slug: "kenshi",
+                sortTypeIsRecency: false
+            }
+
         }
+
     ];
     const gql_data = await gql_request(ops);
 
-    test_element.textContent = JSON.stringify(gql_data[0]);
+    test_element.textContent = JSON.stringify(gql_data);
 
     load_live_followed_channels();
     document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
