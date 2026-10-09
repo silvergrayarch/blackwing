@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Blackwing</title>
+    <link rel="stylesheet" href="index.css">
+</head>
+
+<body>
+    <header>
+        <img class="logo" src="icons/icon.png">
+        <p><strong>Blackwing</strong> (c) 2026 silver_gray</p>
+        <button id="settings-button">⚙</button>
+    </header>
+    <main>
+        <div class="field">
+            <label>Search Categories</label>
+            <input id="categories" placeholder="just chatting, music, irl, etc …">
+        </div>
+
+        <div class="field">
+            <label>Filter Tags</label>
+            <input id="filter_tags" placeholder="(english or japanese) and vtuber">
+        </div>
+
+        <div class="field">
+            <label>Blocked Keywords</label>
+            <input id="bad_keywords" placeholder="nsfw, 18, onlyfans, etc...">
+        </div>
+
+        <div class="row">
+            <div class="field">
+                <label>Max Viewers</label>
+                <input id="max_viewers" placeholder="Max Viewers">
+            </div>
+            <div class="field">
+                <label>Max Followers</label>
+                <input id="max_followers" placeholder="Max Followers">
+            </div>
+        </div>
+
+        <button id="run_button" class="run-button">Run</button>
+
+        <div id="results"></div>
+    </main>
+    <div class="stream-card">
+        <script src="index.js"></script>
+        <div class="category">${stream.category}</div>
+        <div class="title">${stream.title}</div>
+        <div class="username">${stream.username}</div>
+        <div class="stats">Viewers: ${stream.viewers.toLocaleString()}</div>
+        <div class="stats">Followers: ${stream.followers.toLocaleString()}</div>
+        <div class="tags">${tags_html}</div>
+        <a class="open" href="${stream.link}" target="_blank" rel="noopener noreferrer">Open stream</a>
+    </div>
+</body>
+
+</html>
