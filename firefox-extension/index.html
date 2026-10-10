@@ -16,28 +16,49 @@
     <main>
         <section id="settings-page" hidden>
             <div class="field">
-                <label>Search Categories</label>
-                <input id="categories" placeholder="just chatting, music, irl, etc …">
+                <label>Followed Categories</label>
+                <input id="followed-categories" placeholder="just chatting, music, irl, etc …">
             </div>
 
             <div class="field">
                 <label>Filter Tags</label>
-                <input id="filter_tags" placeholder="(english or japanese) and vtuber">
+                <input id="filter-tags" placeholder="(english or japanese) and vtuber">
             </div>
 
             <div class="field">
-                <label>Blocked Keywords</label>
-                <input id="bad_keywords" placeholder="nsfw, 18, onlyfans, etc...">
+                <label>Blocked Description Keywords</label>
+                <input id="bad-description-keywords" placeholder="nsfw, gambling, etc...">
+            </div>
+
+            <div class="field">
+                <label>Blocked Pannel Keywords</label>
+                <input id="bad-pannel-keywords" placeholder="nsfw, gambling, etc...">
+            </div>
+
+            <div class="field">
+                <label>Blocked Rule Keywords</label>
+                <input id="bad-chat-rule-keywords" placeholder="nsfw, gambling, etc...">
             </div>
 
             <div class="row">
                 <div class="field">
                     <label>Max Viewers</label>
-                    <input id="max_viewers" placeholder="Max Viewers">
+                    <input id="max-viewers" placeholder="max viewers">
                 </div>
                 <div class="field">
                     <label>Max Followers</label>
-                    <input id="max_followers" placeholder="Max Followers">
+                    <input id="max-followers" placeholder="max followers">
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="field">
+                    <label>Minimum Viewers</label>
+                    <input id="min-viewers" placeholder="minimum viewers">
+                </div>
+                <div class="field">
+                    <label>Minimum Followers</label>
+                    <input id="min-followers" placeholder="minimum followers">
                 </div>
             </div>
         </section>
@@ -45,6 +66,9 @@
         <section id="front-page">
             <p class="segment-title">Live Followed Channels</p>
             <div id="live-followed-channels"></div>
+
+            <p class="segment-title">Recommended Channels</p>
+            <div id="recommended-channels"></div>
 
             <div id="test"></div>
         </section>

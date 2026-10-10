@@ -51,7 +51,7 @@ main {
 }
 
 .segment-title {
-    margin: 0px;
+    margin: 8px;
     color: var(--purple-1);
 }
 
@@ -60,24 +60,32 @@ main {
     display: flex;
     flex-wrap: wrap;
     padding-bottom: 12px;
-    border-bottom: 1px solid var(--gray-3);
+}
+
+#recommended-channels {
+    gap: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    padding-bottom: 12px;
 }
 
 .stream-card {
-    width: 320px;
     padding: 14px;
     display: grid;
     column-gap: 8px;
-    margin-top: 8px;
     border-radius: 8px;
     color: var(--white-1);
     box-sizing: border-box;
     background: var(--black-2);
     border: 1px solid var(--gray-3);
+    flex: 0 0 calc((100% - 24px) / 4);
     grid-template-columns: 35px minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto 1fr auto;
 }
 
+
 .preview-image {
+    grid-row: 1;
     grid-column: 1 / -1;
 }
 
@@ -87,8 +95,8 @@ main {
 
 .profile-image {
     grid-column: 1;
-    grid-row: 2 / span 5;
     align-self: start;
+    grid-row: 2 / span 4;
 }
 
 .profile-image img {
@@ -106,6 +114,27 @@ main {
     font-size: 14px;
 }
 
+.title {
+    grid-row: 2;
+}
+
+.username {
+    grid-row: 3;
+}
+
+.category {
+    grid-row: 4;
+}
+
+.tags {
+    grid-row: 5;
+}
+
+.open {
+    grid-row: 6;
+    align-self: end;
+}
+
 .title,
 .username,
 .category {
@@ -118,14 +147,19 @@ main {
 
 .tags {
     gap: 4px;
+    height: 24px;
     display: flex;
     flex-wrap: wrap;
+    overflow: hidden;
+    align-self: start;
 }
 
 .tag {
     font-size: 10px;
+    line-height: 12px;
     font-weight: 600;
     padding: 6px 8px;
+    white-space: nowrap;
     border-radius: 999px;
     background: var(--gray-1);
 }
