@@ -18,7 +18,7 @@ async function init()
     load_live_followed_channels();
     load_recommended_channels();
     document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
-    document.getElementById("load-more-recommended").addEventListener("click", load_until_enough_cards);
+    document.getElementById("load-more-recommended").addEventListener("click", load_more_cards);
 
     document.getElementById("filter-tags").value = (await browser.storage.local.get("filter_tags")).filter_tags ?? document.getElementById("filter-tags").value;
     document.getElementById("filter-tags").addEventListener("input", async (event) => { await browser.storage.local.set({ filter_tags: event.target.value }); });
@@ -598,7 +598,7 @@ async function load_recommended_channels()
     );
 
     recommended_state.nodes = gql_data[0].data.currentUser.followedGames.nodes;
-    await load_until_enough_cards();
+    await load_more_cards();
 }
 
 async function load_more_recommended_channels()
@@ -683,21 +683,23 @@ async function load_more_recommended_channels()
     }
 }
 
-const min_total_cards = 10;
+const min_new_cards = 10;
 
-async function load_until_enough_cards()
+async function load_more_cards()
 {
+    const cards_before = document.querySelectorAll("#recommended-channels .stream-card").length;
+
     while (true)
     {
         const seen_before = [...recommended_state.category_states.values()].reduce((total, category_state) => total + category_state.seen.size, 0);
 
         await load_more_recommended_channels();
 
-        const card_count = document.querySelectorAll("#recommended-channels .stream-card").length;
+        const new_card_count = document.querySelectorAll("#recommended-channels .stream-card").length - cards_before;
         const all_finished = [...recommended_state.category_states.values()].every(category_state => category_state.finished);
         const seen_after = [...recommended_state.category_states.values()].reduce((total, category_state) => total + category_state.seen.size, 0);
 
-        if (card_count >= min_total_cards || all_finished) break;
-        if (seen_after === seen_before) break; // a round that checked no new streams (failed requests, say) would repeat forever
+        if (new_card_count >= min_new_cards || all_finished) break;
+        if (seen_after === seen_before) break; // a round that checked no new streams would repeat forever
     }
 }
