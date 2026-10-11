@@ -1,19 +1,24 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "Blackwing",
   "version": "1.0.0",
   "description": "Twitch streamer discovery tool",
-  "permissions": ["storage", "cookies"], 
-  "host_permissions": [
-    "https://www.twitch.tv/*",
-    "https://gql.twitch.tv/*"
+  "permissions": [
+    "storage",
+    "cookies",
+    "tabs",
+    "webNavigation",
+    "webRequest",
+    "webRequestBlocking",
+    "https://*.twitch.tv/*",
+    "https://k.twitchcdn.net/*"
   ],
   "icons": {
     "16": "icons/icon.png",
     "48": "icons/icon.png",
     "128": "icons/icon.png"
   },
-  "action": {
+  "browser_action": {
     "default_title": "Blackwing",
     "default_icon": {
       "16": "icons/icon.png",
@@ -22,7 +27,9 @@
     }
   },
   "background": {
-    "scripts": ["background.js"]
+    "scripts": [
+      "background.js"
+    ]
   },
   "browser_specific_settings": {
     "gecko": {
