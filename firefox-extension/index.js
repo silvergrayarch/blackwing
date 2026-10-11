@@ -18,12 +18,13 @@ async function init()
     load_live_followed_channels();
     load_recommended_channels();
     document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
-
-    document.getElementById("followed-categories").value = (await browser.storage.local.get("followed_categories")).followed_categories ?? document.getElementById("followed-categories").value;
-    document.getElementById("followed-categories").addEventListener("input", async (event) => { await browser.storage.local.set({ followed_categories: event.target.value }); });
+    document.getElementById("load-more-recommended").addEventListener("click", load_more_recommended_channels);
 
     document.getElementById("filter-tags").value = (await browser.storage.local.get("filter_tags")).filter_tags ?? document.getElementById("filter-tags").value;
     document.getElementById("filter-tags").addEventListener("input", async (event) => { await browser.storage.local.set({ filter_tags: event.target.value }); });
+
+    document.getElementById("bad-tags").value = (await browser.storage.local.get("bad_tags")).bad_tags ?? document.getElementById("bad-tags").value;
+    document.getElementById("bad-tags").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_tags: event.target.value }); });
 
     document.getElementById("bad-description-keywords").value = (await browser.storage.local.get("bad_description_keywords")).bad_description_keywords ?? document.getElementById("bad-description-keywords").value;
     document.getElementById("bad-description-keywords").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_description_keywords: event.target.value }); });
@@ -387,97 +388,102 @@ function game_query(slug, cursor = undefined)
     };
 }
 
-async function load_recommended_channels()
+//PYTHON def parse_csv_set(value: str) -> set: return {x.strip().lower() for x in value.split(",") if x.strip()}
+// filter(Boolean) matters: "".split(",") gives [""], and every string "includes" an empty keyword
+function parse_keywords(value)
 {
-    const recommended_channels = document.getElementById("recommended-channels");
+    return (value ?? "").split(",").map(keyword => keyword.trim().toLowerCase()).filter(Boolean);
+}
 
-    const gql_data = await gql_request(
+function parse_count(value)
+{
+    const trimmed_value = String(value ?? "").trim();
+    return /^\d+$/.test(trimmed_value) ? Number(trimmed_value) : null;
+}
+
+async function load_filters()
+{
+    const stored_settings = await browser.storage.local.get(
         [
-            {
-                extensions: {
-                    persistedQuery: {
-                        sha256Hash: "f3c5d45175d623ed3d5ff4ca4c7de379ea6a1a4852236087dc1b81b7dbfd3114",
-                        version: 1
-                    }
-                },
-                operationName: "FollowingGames_CurrentUser",
-                variables: {
-                    limit: 10,
-                    type: "LIVE"
-                }
-            },
+            "filter_tags", "bad_tags",
+            "bad_description_keywords", "bad_pannel_keywords", "bad_rule_keywords",
+            "max_viewers", "max_followers",
+            "min_viewers", "min_followers"
         ]
     );
 
-    const nodes = gql_data[0].data.currentUser.followedGames.nodes;
-
-    const max_streams_per_category = 10;
-
-    for (const node of nodes)
-    {
-        const responses = [];
-        let stream_count = 0;
-
-        let response = await gql_request(game_query(node.slug));
-
-        responses.push(response);
-
-        while (true)
-        {
-            const streams = responses[responses.length - 1].data.game.streams;
-
-            stream_count += streams.edges.length;
-            if (stream_count >= max_streams_per_category)
-                break;
-
-            if (!streams.pageInfo.hasNextPage)
-                break;
-
-            const edges = streams.edges;
-            response = await gql_request(game_query(node.slug, edges[edges.length - 1].cursor));
-            responses.push(response);
-        }
-
-        gql_data.push(responses);
-    }
-
-
-    // gql_data[0] is the followed games response, everything after it is stream pages
-    for (const category_responses of gql_data.slice(1))
-    {
-        for (const response of category_responses)
-        {
-            const edges = response.data.game.streams.edges.slice(0, max_streams_per_category).map(edge => ({
-                node: {
-                    profileImageURL: edge.node.broadcaster.profileImageURL,
-                    displayName: edge.node.broadcaster.displayName,
-                    login: edge.node.broadcaster.login,
-                    stream: edge.node
-                }
-            }));
-            build_cards(recommended_channels, edges);
-        }
-    }
+    return {
+        tag_expression: (stored_settings.filter_tags ?? "").trim().toLowerCase(),
+        bad_tag_expression: (stored_settings.bad_tags ?? "").trim().toLowerCase(),
+        bad_description_keywords: parse_keywords(stored_settings.bad_description_keywords),
+        bad_panel_keywords: parse_keywords(stored_settings.bad_pannel_keywords),
+        bad_rule_keywords: parse_keywords(stored_settings.bad_rule_keywords),
+        max_viewers: parse_count(stored_settings.max_viewers),
+        max_followers: parse_count(stored_settings.max_followers),
+        min_viewers: parse_count(stored_settings.min_viewers),
+        min_followers: parse_count(stored_settings.min_followers)
+    };
 }
 
-//PYTHON def join_set(s: set | None) -> str: return ", ".join(sorted(s)) if s else ""
-function join_set(set) { return (!Array.isArray(set) || set.length === 0) ? "" : [...new Set(set)].sort().join(", "); }
+const follower_count_cache = new Map();
+const channel_text_cache = new Map();
 
-//PYTHON def parse_csv_set(value: str) -> set: return {x.strip().lower() for x in value.split(",") if x.strip()}
-function parse_csv(csv) { return [...new Set(csv.split(",").map(value => value.trim().toLowerCase()))]; }
-
-function get_filters()
+function get_follower_count(user_id)
 {
-    const max_viewers = document.getElementById("max_viewers").value.trim();
-    const max_followers = document.getElementById("max_followers").value.trim();
+    if (follower_count_cache.has(user_id)) return follower_count_cache.get(user_id);
 
-    return {
-        categories: parse_csv(document.getElementById("categories").value),
-        filter_tags: document.getElementById("filter_tags").value.trim() || null,
-        bad_keywords: parse_csv(document.getElementById("bad_keywords").value),
-        max_viewers: /^\d+$/.test(max_viewers) ? Number(max_viewers) : null,
-        max_followers: /^\d+$/.test(max_followers) ? Number(max_followers) : null
-    };
+    const follower_count = (async () =>
+    {
+        const operations = [
+            {
+                operationName: "ChannelFollowerCount",
+                query: `query ChannelFollowerCount($id: ID!) { user(id: $id) { followers { totalCount } } }`,
+                variables: { "id": user_id }
+            }
+        ];
+        const twitch_response = await gql_request(operations);
+        return twitch_response[0]?.data?.user?.followers?.totalCount ?? 0;
+    })();
+
+    follower_count_cache.set(user_id, follower_count);
+    follower_count.catch(() => follower_count_cache.delete(user_id)); // don't cache failures
+    return follower_count;
+}
+
+function get_channel_text_parts(login)
+{
+    if (channel_text_cache.has(login)) return channel_text_cache.get(login);
+
+    const channel_text_parts = (async () =>
+    {
+        const operations = [
+            {
+                operationName: "ChannelDescription",
+                query: `query ChannelDescription($login: String!) { user(login: $login) { description } }`,
+                variables: { login }
+            },
+            {
+                operationName: "ChannelPanels",
+                query: `query ChannelPanels($login: String!) { user(login: $login) { panels { type ... on DefaultPanel { description } } } }`,
+                variables: { login }
+            },
+            {
+                operationName: "Chat_ChatRules",
+                query: `query Chat_ChatRules($login: String!) { user(login: $login) { chatSettings { rules } } }`,
+                variables: { login }
+            }
+        ];
+        const twitch_response = await gql_request(operations);
+
+        return {
+            description: (twitch_response[0]?.data?.user?.description ?? "").toLowerCase(),
+            panels: (twitch_response[1]?.data?.user?.panels ?? []).map(panel => panel.description ?? "").join(" ").toLowerCase(),
+            rules: (twitch_response[2]?.data?.user?.chatSettings?.rules ?? []).join(" ").toLowerCase()
+        };
+    })();
+
+    channel_text_cache.set(login, channel_text_parts);
+    return channel_text_parts;
 }
 
 function evaluate_boolean_expression(expression)
@@ -521,44 +527,144 @@ function has_good_tags(expression, tags)
     return evaluate_boolean_expression(expression);
 }
 
-function has_bad_tags(keywords, tags) { return tags.some(tag => keywords.some(keyword => tag.includes(keyword))); }
-
-async function get_follower_count(user_id)
+// true/false if the expression is valid, null if it isn't (so a typo in the settings box doesn't filter everything out)
+function matches_tag_expression(expression, tags)
 {
-    const operations = [
-        {
-            operationName: "ChannelFollowerCount",
-            query: `query ChannelFollowerCount($id: ID!) { user(id: $id) { followers { totalCount } } }`,
-            variables: { "id": user_id }
-        }
-    ];
-    const twitch_response = await gql_request(operations);
-    return twitch_response[0]?.data?.user?.followers?.totalCount ?? 0;
+    try { return has_good_tags(expression, tags); }
+    catch (error) { console.error("Bad tag expression:", expression, error.message); return null; }
 }
 
-async function get_channel_text(username)
+// cheap checks first, so the extra requests only happen for streams that already passed them
+async function stream_passes_filters(stream, filters)
 {
-    const operations = [
-        {
-            operationName: "ChannelDescription",
-            query: `query ChannelDescription($login: String!) { user(login: $login) { description } }`,
-            variables: { "login": username }
-        },
-        {
-            operationName: "ChannelPanels",
-            query: `query ChannelPanels($login: String!) { user(login: $login) { panels { type ... on DefaultPanel { description } } } }`,
-            variables: { "login": username }
-        },
-        {
-            operationName: "Chat_ChatRules",
-            query: `query Chat_ChatRules($login: String!) { user(login: $login) { chatSettings { rules } } }`,
-            variables: { "login": username }
-        }
-    ];
-    const twitch_response = await gql_request(operations);
+    if (filters.min_viewers !== null && stream.viewersCount < filters.min_viewers) return false;
+    if (filters.max_viewers !== null && stream.viewersCount > filters.max_viewers) return false;
 
-    const description = twitch_response[0]?.data?.user?.description ?? "";
-    const panels = (twitch_response[1]?.data?.user?.panels ?? []).map(p => p.description ?? "");
-    const rules = twitch_response[2]?.data?.user?.chatSettings?.rules ?? [];
-    return [description, ...panels, ...rules].join(" ");
+    const stream_tags = stream.freeformTags.map(tag => tag.name.toLowerCase());
+
+    if (filters.tag_expression && matches_tag_expression(filters.tag_expression, stream_tags) === false) return false;
+    if (filters.bad_tag_expression && matches_tag_expression(filters.bad_tag_expression, stream_tags) === true) return false;
+
+    if (filters.min_followers !== null || filters.max_followers !== null)
+    {
+        const follower_count = await get_follower_count(stream.broadcaster.id);
+        if (filters.min_followers !== null && follower_count < filters.min_followers) return false;
+        if (filters.max_followers !== null && follower_count > filters.max_followers) return false;
+    }
+
+    const needs_channel_text = filters.bad_description_keywords.length > 0
+        || filters.bad_panel_keywords.length > 0
+        || filters.bad_rule_keywords.length > 0;
+
+    if (needs_channel_text)
+    {
+        const channel_text_parts = await get_channel_text_parts(stream.broadcaster.login);
+        if (filters.bad_description_keywords.some(keyword => channel_text_parts.description.includes(keyword))) return false;
+        if (filters.bad_panel_keywords.some(keyword => channel_text_parts.panels.includes(keyword))) return false;
+        if (filters.bad_rule_keywords.some(keyword => channel_text_parts.rules.includes(keyword))) return false;
+    }
+
+    return true;
+}
+
+const recommended_state = { nodes: [], category_states: new Map(), loading: false };
+
+async function load_recommended_channels()
+{
+    const gql_data = await gql_request(
+        [
+            {
+                extensions: {
+                    persistedQuery: {
+                        sha256Hash: "f3c5d45175d623ed3d5ff4ca4c7de379ea6a1a4852236087dc1b81b7dbfd3114",
+                        version: 1
+                    }
+                },
+                operationName: "FollowingGames_CurrentUser",
+                variables: {
+                    limit: 10,
+                    type: "LIVE"
+                }
+            },
+        ]
+    );
+
+    recommended_state.nodes = gql_data[0].data.currentUser.followedGames.nodes;
+    await load_more_recommended_channels();
+}
+
+async function load_more_recommended_channels()
+{
+    if (recommended_state.loading) return;
+    recommended_state.loading = true;
+
+    const recommended_channels = document.getElementById("recommended-channels");
+    const load_more_button = document.getElementById("load-more-recommended");
+    load_more_button.disabled = true;
+
+    const max_streams_per_category = 10;
+    const max_pages_per_category = 5; // stops a strict filter from paging forever
+
+    try
+    {
+        const filters = await load_filters(); // reloaded each time so settings changes apply
+
+        for (const node of recommended_state.nodes)
+        {
+            // cursor = continue after this stream, seen = streams already shown (the list shifts between pages)
+            if (!recommended_state.category_states.has(node.slug))
+                recommended_state.category_states.set(node.slug, { cursor: undefined, finished: false, seen: new Set() });
+
+            const category_state = recommended_state.category_states.get(node.slug);
+            if (category_state.finished) continue;
+
+            const kept_edges = [];
+
+            for (let page_number = 0; page_number < max_pages_per_category && kept_edges.length < max_streams_per_category; page_number++)
+            {
+                const response = await gql_request(game_query(node.slug, category_state.cursor));
+                const streams = response.data.game.streams;
+
+                let stopped_early = false;
+
+                for (const edge of streams.edges)
+                {
+                    if (kept_edges.length >= max_streams_per_category) { stopped_early = true; break; }
+
+                    category_state.cursor = edge.cursor;
+
+                    if (category_state.seen.has(edge.node.broadcaster.login)) continue;
+                    category_state.seen.add(edge.node.broadcaster.login);
+
+                    if (await stream_passes_filters(edge.node, filters)) kept_edges.push(edge);
+                }
+
+                const last_edge = streams.edges[streams.edges.length - 1];
+
+                // sorted by viewers ascending, so once the last stream on a page is over the max, nothing after it can match
+                const past_max_viewers = filters.max_viewers !== null && last_edge && last_edge.node.viewersCount > filters.max_viewers;
+
+                if (past_max_viewers || (!streams.pageInfo.hasNextPage && !stopped_early))
+                {
+                    category_state.finished = true;
+                    break;
+                }
+            }
+
+            build_cards(recommended_channels, kept_edges.map(edge => ({
+                node: {
+                    profileImageURL: edge.node.broadcaster.profileImageURL,
+                    displayName: edge.node.broadcaster.displayName,
+                    login: edge.node.broadcaster.login,
+                    stream: edge.node
+                }
+            })));
+        }
+    }
+    finally
+    {
+        recommended_state.loading = false;
+        load_more_button.disabled = false;
+        load_more_button.hidden = [...recommended_state.category_states.values()].every(category_state => category_state.finished);
+    }
 }
