@@ -691,15 +691,12 @@ async function load_more_cards()
 
     while (true)
     {
-        const seen_before = [...recommended_state.category_states.values()].reduce((total, category_state) => total + category_state.seen.size, 0);
-
         await load_more_recommended_channels();
 
-        const new_card_count = document.querySelectorAll("#recommended-channels .stream-card").length - cards_before;
-        const all_finished = [...recommended_state.category_states.values()].every(category_state => category_state.finished);
-        const seen_after = [...recommended_state.category_states.values()].reduce((total, category_state) => total + category_state.seen.size, 0);
+        const cards_now = document.querySelectorAll("#recommended-channels .stream-card").length;
 
-        if (new_card_count >= min_new_cards || all_finished) break;
-        if (seen_after === seen_before) break; // a round that checked no new streams would repeat forever
+        const all_finished = [...recommended_state.category_states.values()].every(category_state => category_state.finished);
+
+        if (cards_now - cards_before >= min_new_cards || all_finished){break;}
     }
 }
