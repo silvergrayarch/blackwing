@@ -4,6 +4,10 @@ let auth_token = null;
 let x_device_id = null;
 let client_integrity_token = null;
 
+const follower_count_cache = new Map();
+const channel_text_cache = new Map();
+const cards_per_load = 10;
+
 async function init()
 {
     // const test_element = document.getElementById("test");
@@ -15,10 +19,10 @@ async function init()
 
     // test_element.textContent = JSON.stringify(gql_data);
 
-    load_live_followed_channels();
-    load_recommended_channels();
+    get_live_followed_channels();
+    get_recommended_channels();
     document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
-    document.getElementById("load-more-recommended").addEventListener("click", load_more_cards);
+    document.getElementById("load-more-recommended").addEventListener("click", get_recommended_channels);
 
     document.getElementById("filter-tags").value = (await browser.storage.local.get("filter_tags")).filter_tags ?? document.getElementById("filter-tags").value;
     document.getElementById("filter-tags").addEventListener("input", async (event) => { await browser.storage.local.set({ filter_tags: event.target.value }); });
@@ -327,7 +331,7 @@ function build_cards(parent, edges)
     }
 }
 
-async function load_live_followed_channels()
+async function get_live_followed_channels()
 {
 
     const followed_live_channels = document.getElementById("live-followed-channels");
@@ -368,7 +372,7 @@ function game_query(slug, cursor = undefined)
             cursor,
             imageWidth: 50,
             includeCostreaming: true,
-            limit: 30,
+            limit: 100,
             options: {
                 broadcasterLanguages: [
                     "EN"
@@ -430,8 +434,7 @@ async function load_filters()
     };
 }
 
-const follower_count_cache = new Map();
-const channel_text_cache = new Map();
+
 
 function get_follower_count(user_id)
 {
@@ -575,128 +578,117 @@ async function stream_passes_filters(stream, filters)
     return true;
 }
 
-const recommended_state = { nodes: [], category_states: new Map(), loading: false };
+const recommended_state = { nodes: [], category_states: new Map() };
 
-async function load_recommended_channels()
+async function get_recommended_channels()
 {
-    const gql_data = await gql_request(
-        [
-            {
-                extensions: {
-                    persistedQuery: {
-                        sha256Hash: "f3c5d45175d623ed3d5ff4ca4c7de379ea6a1a4852236087dc1b81b7dbfd3114",
-                        version: 1
-                    }
-                },
-                operationName: "FollowingGames_CurrentUser",
-                variables: {
-                    limit: 10,
-                    type: "LIVE"
-                }
-            },
-        ]
-    );
-
-    recommended_state.nodes = gql_data[0].data.currentUser.followedGames.nodes;
-    await load_more_cards();
-}
-
-async function load_more_recommended_channels()
-{
-    if (recommended_state.loading) return;
-    recommended_state.loading = true;
-
-    const recommended_channels = document.getElementById("recommended-channels");
     const load_more_button = document.getElementById("load-more-recommended");
+
+    // ignore if a load is already running (stops double clicks from duplicating cards)
+    if (load_more_button.disabled) return;
     load_more_button.disabled = true;
 
-    const max_streams_per_category = 10;
-    const max_pages_per_category = 5; // stops a strict filter from paging forever
+    const recommended_channels = document.getElementById("recommended-channels");
 
     try
     {
-        const filters = await load_filters(); // reloaded each time so settings changes apply
-
-        for (const node of recommended_state.nodes)
+        // only true on the very first call
+        if (recommended_state.nodes.length === 0)
         {
-            // cursor = continue after this stream, seen = streams already shown (the list shifts between pages)
-            if (!recommended_state.category_states.has(node.slug))
+            const gql_data = await gql_request(
+                [
+                    {
+                        extensions: {
+                            persistedQuery: {
+                                sha256Hash: "f3c5d45175d623ed3d5ff4ca4c7de379ea6a1a4852236087dc1b81b7dbfd3114",
+                                version: 1
+                            }
+                        },
+                        operationName: "FollowingGames_CurrentUser",
+                        variables: {
+                            limit: 30,
+                            type: "LIVE"
+                        }
+                    },
+                ]
+            );
+
+            recommended_state.nodes = gql_data[0].data.currentUser.followedGames.nodes;
+
+            for (const node of recommended_state.nodes)
                 recommended_state.category_states.set(node.slug, { cursor: undefined, finished: false, seen: new Set() });
+        }
 
-            const category_state = recommended_state.category_states.get(node.slug);
-            if (category_state.finished) continue;
+        const filters = await load_filters();
 
-            const kept_edges = [];
+        let cards_added = 0;
+        while (cards_added < cards_per_load)
+        {
+            const unfinished_nodes = recommended_state.nodes.filter(node => !recommended_state.category_states.get(node.slug).finished);
+            if (unfinished_nodes.length === 0) break;
 
-            for (let page_number = 0; page_number < max_pages_per_category && kept_edges.length < max_streams_per_category; page_number++)
+            for (const node of unfinished_nodes)
             {
+                const category_state = recommended_state.category_states.get(node.slug);
+
                 const response = await gql_request(game_query(node.slug, category_state.cursor));
+
                 const streams = response?.data?.game?.streams;
 
-                if (!streams)
+                if (!streams || streams.edges.length === 0)
                 {
-                    console.error("Missing streams data for:", node.slug, response);
-                    break;
+                    if (!streams) console.error("Missing streams data for:", node.slug, response);
+                    category_state.finished = true;
+                    continue;
                 }
 
-                let stopped_early = false;
+                let new_streams_on_page = 0;
 
                 for (const edge of streams.edges)
                 {
-                    if (kept_edges.length >= max_streams_per_category) { stopped_early = true; break; }
-
                     category_state.cursor = edge.cursor;
 
-                    if (category_state.seen.has(edge.node.broadcaster.login)) continue;
-                    category_state.seen.add(edge.node.broadcaster.login);
+                    const username = edge.node.broadcaster.login;
 
-                    if (await stream_passes_filters(edge.node, filters)) kept_edges.push(edge);
+                    // skip repeats quietly (a few are normal because the list reshuffles between pages)
+                    if (category_state.seen.has(username)) continue;
+                    category_state.seen.add(username);
+                    new_streams_on_page++;
+
+                    // skip streams that fail any of the filters
+                    if (!(await stream_passes_filters(edge.node, filters))) continue;
+
+                    build_cards(recommended_channels, [{
+                        node: {
+                            profileImageURL: edge.node.broadcaster.profileImageURL,
+                            displayName: edge.node.broadcaster.displayName,
+                            login: username,
+                            stream: edge.node
+                        }
+                    }]);
+                    cards_added++;
                 }
+
+                // a whole page with nothing new means paging stopped advancing, so stop this game
+                if (new_streams_on_page === 0) category_state.finished = true;
 
                 const last_edge = streams.edges[streams.edges.length - 1];
 
-                // sorted by viewers ascending, so once the last stream on a page is over the max, nothing after it can match
-                const past_max_viewers = filters.max_viewers !== null && last_edge && last_edge.node.viewersCount > filters.max_viewers;
+                // sorted by viewers ascending, so once the last stream is over the max, nothing after it can match
+                const past_max_viewers = filters.max_viewers !== null && last_edge.node.viewersCount > filters.max_viewers;
 
-                if (past_max_viewers || (!streams.pageInfo.hasNextPage && !stopped_early))
-                {
+                if (past_max_viewers || !streams.pageInfo.hasNextPage)
                     category_state.finished = true;
-                    break;
-                }
-            }
 
-            build_cards(recommended_channels, kept_edges.map(edge => ({
-                node: {
-                    profileImageURL: edge.node.broadcaster.profileImageURL,
-                    displayName: edge.node.broadcaster.displayName,
-                    login: edge.node.broadcaster.login,
-                    stream: edge.node
-                }
-            })));
+                if (cards_added >= cards_per_load) break;
+            }
         }
     }
     finally
     {
-        recommended_state.loading = false;
         load_more_button.disabled = false;
-        load_more_button.hidden = [...recommended_state.category_states.values()].every(category_state => category_state.finished);
-    }
-}
 
-const min_new_cards = 10;
-
-async function load_more_cards()
-{
-    const cards_before = document.querySelectorAll("#recommended-channels .stream-card").length;
-
-    while (true)
-    {
-        await load_more_recommended_channels();
-
-        const cards_now = document.querySelectorAll("#recommended-channels .stream-card").length;
-
-        const all_finished = [...recommended_state.category_states.values()].every(category_state => category_state.finished);
-
-        if (cards_now - cards_before >= min_new_cards || all_finished){break;}
+        // when every game has been fully exhausted hide the Load More button
+        load_more_button.hidden = recommended_state.nodes.length > 0 && recommended_state.nodes.every(node => recommended_state.category_states.get(node.slug)?.finished);
     }
 }
