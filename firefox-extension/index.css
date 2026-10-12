@@ -17,7 +17,9 @@ body {
 }
 
 header {
+    top: 0;
     display: flex;
+    position:  sticky;
     align-items: center;
     background-color: var(--gray-2);
 }
