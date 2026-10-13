@@ -640,17 +640,20 @@ async function get_recommended_channels()
 
                 if (!streams || streams.edges.length === 0)
                 {
-                    console.warn("FINISHED", node.slug, "reason: empty or missing response", response?.errors ?? "");
+                    console.warn("finished: ", node.slug, ", reason: empty or missing response, errors: ", response?.errors ?? "");
                     state.finished = true;
                     continue;
                 }
 
+                let new_streams = 0;
                 for (const edge of streams.edges)
                 {
                     const username = edge.node.broadcaster.login;
-
+                    
                     if (state.seen.has(username)) continue;
                     state.seen.add(username);
+                    
+                    new_streams++;
 
                     // skip streams that fail any of the filters
                     if (!(await stream_passes_filters(edge.node, filters)))
@@ -668,6 +671,9 @@ async function get_recommended_channels()
                     ]);
                     cards_added++;
                 }
+
+                if (new_streams === 0) 
+                    state.finished = true;
 
                 const last_stream = streams.edges[streams.edges.length - 1];
 
@@ -692,6 +698,6 @@ async function get_recommended_channels()
         load_more_button.disabled = false;
 
         // when every game has been fully exhausted hide the Load More button
-        load_more_button.hidden = category_nodes.length > 0 && category_nodes.every(node => category_states.get(node.slug)?.finished);
+        load_more_button.hidden = category_nodes.length > 0 && category_nodes.every(node => category_states.get(node.slug).finished);
     }
 }
