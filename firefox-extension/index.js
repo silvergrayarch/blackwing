@@ -15,14 +15,24 @@ async function init()
     // const test_element = document.getElementById("test");
 
     // const ops = [
+    //     {
+    //         "extensions": {
+    //             "persistedQuery": {
+    //                 "sha256Hash": "ad022ca32220d5523d03a23cbcb5beaa1e0999889c1f8f78f9f2520dafb5cae6",
+    //                 "version": 1
+    //             }
+    //         },
+    //         "operationName": "StreamMetadata",
+    //         "variables": {
+    //             "channelLogin": "catbclock"
+    //         }
+    //     }
 
     // ];
     // const gql_data = await gql_request(ops);
 
     // test_element.textContent = JSON.stringify(gql_data);
 
-    get_live_followed_channels();
-    get_recommended_channels();
     document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
     document.getElementById("load-more-recommended").addEventListener("click", get_recommended_channels);
 
@@ -55,6 +65,9 @@ async function init()
 
     document.getElementById("min-followers").value = (await browser.storage.local.get("min_followers")).min_followers ?? document.getElementById("min-followers").value;
     document.getElementById("min-followers").addEventListener("input", async (event) => { await browser.storage.local.set({ min_followers: event.target.value }); });
+
+    window.setInterval(refresh_followed_channels(), 90000);
+    window.setInterval(refresh_recommended_channels(), 90000);
 }
 
 async function toggle_settings_menu()
@@ -276,7 +289,8 @@ function build_cards(parent, edges)
         preview_image_wrapper.className = "preview-image";
 
         const preview_image = document.createElement("img");
-        preview_image.src = node.stream.previewImageURL;
+        const preview_url = node.stream.previewImageURL;
+        preview_image.src = preview_url;
 
         preview_image_wrapper.appendChild(preview_image);
         stream_card.appendChild(preview_image_wrapper);
@@ -649,10 +663,10 @@ async function get_recommended_channels()
                 for (const edge of streams.edges)
                 {
                     const username = edge.node.broadcaster.login;
-                    
+
                     if (state.seen.has(username)) continue;
                     state.seen.add(username);
-                    
+
                     new_streams++;
 
                     // skip streams that fail any of the filters
@@ -672,7 +686,7 @@ async function get_recommended_channels()
                     cards_added++;
                 }
 
-                if (new_streams === 0) 
+                if (new_streams === 0)
                     state.finished = true;
 
                 const last_stream = streams.edges[streams.edges.length - 1];
@@ -701,3 +715,40 @@ async function get_recommended_channels()
         load_more_button.hidden = category_nodes.length > 0 && category_nodes.every(node => category_states.get(node.slug).finished);
     }
 }
+
+function refresh_followed_channels() 
+{
+    if (document.getElementById("front-page").hidden) return;
+    document.getElementById("live-followed-channels").innerHTML = "";
+    get_live_followed_channels();
+}
+
+
+function refresh_recommended_channels()
+{
+    if (document.getElementById("front-page").hidden) return;
+    document.getElementById("recommended-channels").innerHTML = "";
+    get_recommended_channels();
+}
+
+// async function refresh_recommended_channels()
+// {
+//     if (document.getElementById("front-page").hidden) return;
+
+//     const recommended_channels = document.getElementById("recommended-channels");
+    
+//     if (recommended_channels.children.length === 0)
+//     {
+//         get_recommended_channels();
+//         return;
+//     }
+
+//     for (const node of category_nodes) 
+//         category_states.set(node.slug, { cursor: undefined, finished: false, seen: category_states[node.slug].seen });
+
+//     for (child of recommended_channels.children)
+//     {
+        
+//     }
+    
+// }
