@@ -1,0 +1,22 @@
+const { invoke } = window.__TAURI__.core;
+
+let greetInputEl;
+let greetMsgEl;
+
+async function greet()
+{
+  greetMsgEl.textContent = await invoke("greet", { name: greetInputEl.value });
+}
+
+window.addEventListener("DOMContentLoaded", () => init());
+
+function init()
+{
+  greetInputEl = document.querySelector("#greet-input");
+  greetMsgEl = document.querySelector("#greet-msg");
+  document.querySelector("#greet-form").addEventListener("submit", (e) =>
+  {
+    e.preventDefault();
+    greet();
+  });
+} 
