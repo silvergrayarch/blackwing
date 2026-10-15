@@ -10,71 +10,70 @@ const cards_per_load = 10;
 let category_nodes = [];
 let category_states = new Map();
 
+let current_page = "home-page";
+
 async function init()
 {
     // const test_element = document.getElementById("test");
 
     // const ops = [
-    //     {
-    //         "extensions": {
-    //             "persistedQuery": {
-    //                 "sha256Hash": "ad022ca32220d5523d03a23cbcb5beaa1e0999889c1f8f78f9f2520dafb5cae6",
-    //                 "version": 1
-    //             }
-    //         },
-    //         "operationName": "StreamMetadata",
-    //         "variables": {
-    //             "channelLogin": "catbclock"
-    //         }
-    //     }
+
 
     // ];
     // const gql_data = await gql_request(ops);
 
     // test_element.textContent = JSON.stringify(gql_data);
-
-    document.getElementById("settings-button").addEventListener("click", toggle_settings_menu);
+    document.getElementById("home-page-button").addEventListener("click", () => { swap_page("home-page"); });
+    document.getElementById("following-page-button").addEventListener("click", () => { swap_page("following-page"); });
+    document.getElementById("recommended-page-button").addEventListener("click", () => { swap_page("recommended-page"); });
+    document.getElementById("settings-menu-button").addEventListener("click", toggle_settings_menu);
     document.getElementById("load-more-recommended").addEventListener("click", get_recommended_channels);
 
-    document.getElementById("filter-tags").value = (await browser.storage.local.get("filter_tags")).filter_tags ?? document.getElementById("filter-tags").value;
-    document.getElementById("filter-tags").addEventListener("input", async (event) => { await browser.storage.local.set({ filter_tags: event.target.value }); });
+    bind_input("filter-tags");
+    bind_input("bad-tags");
+    bind_input("bad-title-keywords");
+    bind_input("bad-description-keywords");
+    bind_input("bad-pannel-keywords");
+    bind_input("bad-rule-keywords");
+    bind_input("max-viewers");
+    bind_input("max-followers");
+    bind_input("min-viewers");
+    bind_input("min-followers");
 
-    document.getElementById("bad-tags").value = (await browser.storage.local.get("bad_tags")).bad_tags ?? document.getElementById("bad-tags").value;
-    document.getElementById("bad-tags").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_tags: event.target.value }); });
+    await get_recommended_channels();
+    await get_live_followed_channels();
 
-    document.getElementById("bad-title-keywords").value = (await browser.storage.local.get("bad_title_keywords")).bad_title_keywords ?? document.getElementById("bad-title-keywords").value;
-    document.getElementById("bad-title-keywords").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_title_keywords: event.target.value }); });
-
-    document.getElementById("bad-description-keywords").value = (await browser.storage.local.get("bad_description_keywords")).bad_description_keywords ?? document.getElementById("bad-description-keywords").value;
-    document.getElementById("bad-description-keywords").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_description_keywords: event.target.value }); });
-
-    document.getElementById("bad-pannel-keywords").value = (await browser.storage.local.get("bad_pannel_keywords")).bad_pannel_keywords ?? document.getElementById("bad-pannel-keywords").value;
-    document.getElementById("bad-pannel-keywords").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_pannel_keywords: event.target.value }); });
-
-    document.getElementById("bad-rule-keywords").value = (await browser.storage.local.get("bad_rule_keywords")).bad_rule_keywords ?? document.getElementById("bad-rule-keywords").value;
-    document.getElementById("bad-rule-keywords").addEventListener("input", async (event) => { await browser.storage.local.set({ bad_rule_keywords: event.target.value }); });
-
-    document.getElementById("max-viewers").value = (await browser.storage.local.get("max_viewers")).max_viewers ?? document.getElementById("max-viewers").value;
-    document.getElementById("max-viewers").addEventListener("input", async (event) => { await browser.storage.local.set({ max_viewers: event.target.value }); });
-
-    document.getElementById("max-followers").value = (await browser.storage.local.get("max_followers")).max_followers ?? document.getElementById("max-followers").value;
-    document.getElementById("max-followers").addEventListener("input", async (event) => { await browser.storage.local.set({ max_followers: event.target.value }); });
-
-    document.getElementById("min-viewers").value = (await browser.storage.local.get("min_viewers")).min_viewers ?? document.getElementById("min-viewers").value;
-    document.getElementById("min-viewers").addEventListener("input", async (event) => { await browser.storage.local.set({ min_viewers: event.target.value }); });
-
-    document.getElementById("min-followers").value = (await browser.storage.local.get("min_followers")).min_followers ?? document.getElementById("min-followers").value;
-    document.getElementById("min-followers").addEventListener("input", async (event) => { await browser.storage.local.set({ min_followers: event.target.value }); });
-
-    window.setInterval(refresh_followed_channels(), 90000);
-    window.setInterval(refresh_recommended_channels(), 90000);
+    window.setInterval(refresh_followed_channels, 90000);
+    window.setInterval(refresh_recommended_channels, 90000);
 }
 
-async function toggle_settings_menu()
+function bind_input(input_element_id)
 {
-    const front_page = document.getElementById("front-page");
-    const settings_page = document.getElementById("settings-page");
-    front_page.hidden = !front_page.hidden;
+    const input_element = document.getElementById(input_element_id);
+    const storage_key = input_element_id.replaceAll("-", "_");
+
+    browser.storage.local.get(storage_key).then((stored_values) => { input_element.value = stored_values[storage_key] ?? input_element.value; });
+    input_element.addEventListener("input", (event) => { browser.storage.local.set({ [storage_key]: event.target.value }); });
+}
+
+function swap_page(page_str)
+{
+    if (current_page === page_str) return;
+    document.getElementById(current_page).hidden = true;
+    document.getElementById(page_str).hidden = false;
+    current_page = page_str;
+
+    if (current_page === "following-page")
+        refresh_followed_channels();
+    else if (current_page === "recommended-page")
+        refresh_recommended_channels();
+}
+
+function toggle_settings_menu()
+{
+    const active_page = document.getElementById(current_page);
+    const settings_page = document.getElementById("settings-menu");
+    active_page.hidden = !active_page.hidden;
     settings_page.hidden = !settings_page.hidden;
 }
 
@@ -105,7 +104,6 @@ async function get_x_device_id()
     x_device_id = cookie ? cookie.value : null;
     return x_device_id;
 }
-
 
 function get_client_integrity_token(request_headers)
 {
@@ -450,8 +448,6 @@ async function load_filters()
     };
 }
 
-
-
 function get_follower_count(user_id)
 {
     if (follower_count_cache.has(user_id)) return follower_count_cache.get(user_id);
@@ -716,39 +712,50 @@ async function get_recommended_channels()
     }
 }
 
-function refresh_followed_channels() 
+async function refresh_followed_channels() 
 {
-    if (document.getElementById("front-page").hidden) return;
-    document.getElementById("live-followed-channels").innerHTML = "";
-    get_live_followed_channels();
+    if (document.getElementById("following-page").hidden) return;
+    const cards = document.querySelectorAll("#following-page .stream-card");
+
+    const operations = [];
+
+    for (const card of cards)
+    {
+        operations.push(
+            {
+                "extensions": {
+                    "persistedQuery": {
+                        "sha256Hash": "ad022ca32220d5523d03a23cbcb5beaa1e0999889c1f8f78f9f2520dafb5cae6",
+                        "version": 1
+                    }
+                },
+                "operationName": "StreamMetadata",
+                "variables": {
+                    "channelLogin": card.querySelectorAll(".username")[0].textContent.toLowerCase()
+                }
+            }
+        )
+
+    }
+
+    const gql_data = await gql_request(operations);
+
+    for (var i = 0; i < cards.length; ++i)
+    {
+        if (!gql_data[i].data?.user?.stream?.type || gql_data[i].data?.user?.stream?.type == null)
+            cards[i].remove();
+        else
+        {
+            const preview_image = cards[i].querySelectorAll(".profile-image img")[0];
+            preview_image.src = preview_image.src;
+        }
+    }
 }
 
 
-function refresh_recommended_channels()
+async function refresh_recommended_channels()
 {
-    if (document.getElementById("front-page").hidden) return;
+    if (document.getElementById("recommended-page").hidden) return;
     document.getElementById("recommended-channels").innerHTML = "";
-    get_recommended_channels();
+    await get_recommended_channels();
 }
-
-// async function refresh_recommended_channels()
-// {
-//     if (document.getElementById("front-page").hidden) return;
-
-//     const recommended_channels = document.getElementById("recommended-channels");
-    
-//     if (recommended_channels.children.length === 0)
-//     {
-//         get_recommended_channels();
-//         return;
-//     }
-
-//     for (const node of category_nodes) 
-//         category_states.set(node.slug, { cursor: undefined, finished: false, seen: category_states[node.slug].seen });
-
-//     for (child of recommended_channels.children)
-//     {
-        
-//     }
-    
-// }
