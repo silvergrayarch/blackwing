@@ -337,6 +337,8 @@ function build_cards(parent, edges)
         const open = document.createElement("a");
         open.className = "open";
         open.href = `https://www.twitch.tv/${node.login}`;
+        open.target = "_blank";
+        open.rel = "noopener noreferrer";
         open.textContent = "Open Stream";
 
         stream_card.appendChild(open);
