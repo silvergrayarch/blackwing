@@ -10,7 +10,7 @@ const cards_per_load = 10;
 let category_nodes = [];
 let category_states = new Map();
 
-let current_page = "home-page";
+let current_page = "following-page";
 
 async function init()
 {
@@ -23,7 +23,6 @@ async function init()
     // const gql_data = await gql_request(ops);
 
     // test_element.textContent = JSON.stringify(gql_data);
-    document.getElementById("home-page-button").addEventListener("click", () => { swap_page("home-page"); });
     document.getElementById("following-page-button").addEventListener("click", () => { swap_page("following-page"); });
     document.getElementById("recommended-page-button").addEventListener("click", () => { swap_page("recommended-page"); });
     document.getElementById("settings-menu-button").addEventListener("click", toggle_settings_menu);
@@ -40,8 +39,8 @@ async function init()
     bind_input("min-viewers");
     bind_input("min-followers");
 
-    await get_recommended_channels();
-    await get_live_followed_channels();
+    get_recommended_channels();
+    get_live_followed_channels();
 
     window.setInterval(refresh_followed_channels, 90000);
     window.setInterval(refresh_recommended_channels, 90000);
@@ -288,7 +287,8 @@ function build_cards(parent, edges)
 
         const preview_image = document.createElement("img");
         const preview_url = node.stream.previewImageURL;
-        preview_image.src = preview_url;
+        const current_resolution = preview_url.substring(preview_url.lastIndexOf("-") + 1, preview_url.lastIndexOf("."));
+        preview_image.src = preview_url.replace(current_resolution, "558x330");
 
         preview_image_wrapper.appendChild(preview_image);
         stream_card.appendChild(preview_image_wrapper);
@@ -756,6 +756,6 @@ async function refresh_followed_channels()
 async function refresh_recommended_channels()
 {
     if (document.getElementById("recommended-page").hidden) return;
-    document.getElementById("recommended-channels").innerHTML = "";
-    await get_recommended_channels();
+    // document.getElementById("recommended-channels").innerHTML = "";
+    // await get_recommended_channels();
 }
