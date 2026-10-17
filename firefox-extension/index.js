@@ -412,7 +412,6 @@ function game_query(slug, cursor = undefined)
 }
 
 //PYTHON def parse_csv_set(value: str) -> set: return {x.strip().lower() for x in value.split(",") if x.strip()}
-// filter(Boolean) matters: "".split(",") gives [""], and every string "includes" an empty keyword
 function parse_keywords(value)
 {
     return (value ?? "").split(",").map(keyword => keyword.trim().toLowerCase()).filter(Boolean);
@@ -549,14 +548,12 @@ function has_good_tags(expression, tags)
     return evaluate_boolean_expression(expression);
 }
 
-// true/false if the expression is valid, null if it isn't (so a typo in the settings box doesn't filter everything out)
 function matches_tag_expression(expression, tags)
 {
     try { return has_good_tags(expression, tags); }
     catch (error) { console.error("Bad tag expression:", expression, error.message); return null; }
 }
 
-// cheap checks first, so the extra requests only happen for streams that already passed them
 async function stream_passes_filters(stream, filters)
 {
     if (filters.min_viewers !== null && stream.viewersCount < filters.min_viewers) return false;
@@ -717,43 +714,42 @@ async function get_recommended_channels()
 async function refresh_followed_channels() 
 {
     if (document.getElementById("following-page").hidden) return;
-    const cards = document.querySelectorAll("#following-page .stream-card");
+    // const cards = document.querySelectorAll("#following-page .stream-card");
 
-    const operations = [];
+    // const operations = [];
 
-    for (const card of cards)
-    {
-        operations.push(
-            {
-                "extensions": {
-                    "persistedQuery": {
-                        "sha256Hash": "ad022ca32220d5523d03a23cbcb5beaa1e0999889c1f8f78f9f2520dafb5cae6",
-                        "version": 1
-                    }
-                },
-                "operationName": "StreamMetadata",
-                "variables": {
-                    "channelLogin": card.querySelectorAll(".username")[0].textContent.toLowerCase()
-                }
-            }
-        )
+    // for (const card of cards)
+    // {
+    //     operations.push(
+    //         {
+    //             "extensions": {
+    //                 "persistedQuery": {
+    //                     "sha256Hash": "ad022ca32220d5523d03a23cbcb5beaa1e0999889c1f8f78f9f2520dafb5cae6",
+    //                     "version": 1
+    //                 }
+    //             },
+    //             "operationName": "StreamMetadata",
+    //             "variables": {
+    //                 "channelLogin": card.querySelectorAll(".username")[0].textContent.toLowerCase()
+    //             }
+    //         }
+    //     )
 
-    }
+    // }
 
-    const gql_data = await gql_request(operations);
+    // const gql_data = await gql_request(operations);
 
-    for (var i = 0; i < cards.length; ++i)
-    {
-        if (!gql_data[i].data?.user?.stream?.type || gql_data[i].data?.user?.stream?.type == null)
-            cards[i].remove();
-        else
-        {
-            const preview_image = cards[i].querySelectorAll(".profile-image img")[0];
-            preview_image.src = preview_image.src;
-        }
-    }
+    // for (var i = 0; i < cards.length; ++i)
+    // {
+    //     if (!gql_data[i].data?.user?.stream?.type || gql_data[i].data?.user?.stream?.type == null)
+    //         cards[i].remove();
+    //     else
+    //     {
+    //         const preview_image = cards[i].querySelectorAll(".profile-image img")[0];
+    //         preview_image.src = preview_image.src;
+    //     }
+    // }
 }
-
 
 async function refresh_recommended_channels()
 {
