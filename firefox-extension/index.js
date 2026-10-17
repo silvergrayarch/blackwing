@@ -133,68 +133,69 @@ async function get_x_device_id()
     return user_context.x_device_id;
 }
 
-async function get_client_integrity_token(request_headers)
+function get_client_integrity_token(headers)
 {
     if (user_context.client_integrity_token) return user_context.client_integrity_token;
 
-    const device_id = await get_x_device_id();
-    const current_tab = await browser.tabs.getCurrent();
-
-    function integrity_promise_in_page(request_headers, device_id)
+    user_context.client_integrity_token = (async () =>
     {
-        return new Promise((resolve, reject) =>
+        const current_tab = await browser.tabs.getCurrent();
+
+        function integrity_promise_in_page(headers)
         {
-            function configureKasadaSdk()
+            return new Promise((resolve, reject) =>
             {
-                window.KPSDK.configure(
-                    [
-                        {
-                            protocol: "https:",
-                            method: "POST",
-                            domain: "gql.twitch.tv",
-                            path: "/integrity",
-                        },
-                    ]
-                );
-            }
-
-            async function fetchIntegrityResponse()
-            {
-                const response = await window.fetch("https://gql.twitch.tv/integrity", {
-                    method: "POST",
-                    mode: "cors",
-                    credentials: "omit",
-                    body: null,
-                    headers: { ...request_headers, "x-device-id": device_id },
-                });
-
-                if (response.status !== 200)
+                function configureKasadaSdk()
                 {
-                    throw new Error(`Unexpected integrity response status ${response.status}`);
+                    window.KPSDK.configure(
+                        [
+                            {
+                                protocol: "https:",
+                                method: "POST",
+                                domain: "gql.twitch.tv",
+                                path: "/integrity",
+                            },
+                        ]
+                    );
                 }
 
-                const { token } = await response.json();
-                return token;
-            }
+                async function fetchIntegrityResponse()
+                {
+                    const response = await window.fetch("https://gql.twitch.tv/integrity", {
+                        method: "POST",
+                        mode: "cors",
+                        credentials: "omit",
+                        body: null,
+                        headers,
+                    });
 
-            document.addEventListener("kpsdk-load", configureKasadaSdk, { once: true });
-            document.addEventListener("kpsdk-ready", () => fetchIntegrityResponse().then(resolve, reject), { once: true });
+                    if (response.status !== 200)
+                    {
+                        throw new Error(`Unexpected integrity response status ${response.status}`);
+                    }
 
-            const kasada = document.createElement("script");
-            kasada.addEventListener("error", reject);
-            kasada.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js";
-            document.body.appendChild(kasada);
-        });
-    }
+                    const { token } = await response.json();
+                    return token;
+                }
 
-    // runs promise in the page's own JS world and posts the result back
-    const page_code = `(${integrity_promise_in_page.toString()})(${JSON.stringify(request_headers)}, ${JSON.stringify(device_id)}).then(
+                document.addEventListener("kpsdk-load", configureKasadaSdk, { once: true });
+                document.addEventListener("kpsdk-ready", () => fetchIntegrityResponse().then(resolve, reject), { once: true });
+
+                const kasada = document.createElement("script");
+                kasada.addEventListener("error", reject);
+                kasada.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js";
+                document.body.appendChild(kasada);
+            });
+        }
+
+        // runs promise in the page's own JS world and posts the result back
+        const page_code = `(${integrity_promise_in_page.toString()})(${JSON.stringify(headers)}).then(
             (token) => window.postMessage({ blackwing_integrity: true, token }, "*"),
             (error) => window.postMessage({ blackwing_integrity: true, error: String(error) }, "*")
         );`;
 
-    // runs in the frame's content script world, injects page_code, and waits for the postMessage
-    const frame_code = `new Promise((resolve, reject) =>
+        // runs in the frame's content script world, injects page_code, and waits for the postMessage
+        const frame_code = `new Promise((resolve, reject) =>
         {
             const timeout_id = setTimeout(() => reject(new Error("Integrity token timed out")), 20000);
 
@@ -211,49 +212,66 @@ async function get_client_integrity_token(request_headers)
             document.documentElement.appendChild(page_script);
         })`;
 
-    const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
+        const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
 
-    function make_empty_document(details)
-    {
-        const response_filter = browser.webRequest.filterResponseData(details.requestId);
-        response_filter.ondata = () => { };
-        response_filter.onstop = () =>
+        // replace the page with an empty document so Twitch's app never loads
+        function swap_body_for_empty_document(details)
         {
-            response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
-            response_filter.close();
-        };
-    }
+            const response_filter = browser.webRequest.filterResponseData(details.requestId);
+            response_filter.ondata = () => { };
+            response_filter.onstop = () =>
+            {
+                response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
+                response_filter.close();
+            };
+        }
 
-    function strip_blocking_headers(details)
-    {
-        return { responseHeaders: details.responseHeaders.filter((header) => !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase())) };
-    }
+        // twitch refuses to be framed, so strip the headers that block it
+        function strip_frame_blocking_headers(details)
+        {
+            return {
+                responseHeaders: details.responseHeaders.filter((header) =>
+                    !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase()))
+            };
+        }
 
-    browser.webRequest.onBeforeRequest.addListener(make_empty_document, request_filter, ["blocking"]);
-    browser.webRequest.onHeadersReceived.addListener(strip_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
+        browser.webRequest.onBeforeRequest.addListener(swap_body_for_empty_document, request_filter, ["blocking"]);
+        browser.webRequest.onHeadersReceived.addListener(strip_frame_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
 
-    const integrity_frame = document.createElement("iframe");
-    integrity_frame.style.display = "none";
+        const integrity_frame = document.createElement("iframe");
+        integrity_frame.style.display = "none";
 
-    await new Promise((resolve, reject) =>
-    {
-        integrity_frame.addEventListener("load", resolve, { once: true });
-        integrity_frame.addEventListener("error", reject, { once: true });
-        integrity_frame.src = "https://www.twitch.tv/";
-        document.body.appendChild(integrity_frame);
-    });
+        try
+        {
+            await new Promise((resolve, reject) =>
+            {
+                integrity_frame.addEventListener("load", resolve, { once: true });
+                integrity_frame.addEventListener("error", reject, { once: true });
+                integrity_frame.src = "https://www.twitch.tv/";
+                document.body.appendChild(integrity_frame);
+            });
 
-    const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
-    const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
-    if (!twitch_frame) throw new Error("Twitch integrity frame not found");
+            const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
+            const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
+            if (!twitch_frame) throw new Error("Twitch integrity frame not found");
 
-    user_context.client_integrity_token = await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code });
+            const [token] = await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code });
+            return token;
+        }
+        catch (error)
+        {
+            user_context.client_integrity_token = null; // so the next call retries
+            throw error;
+        }
+        finally
+        {
+            browser.webRequest.onBeforeRequest.removeListener(swap_body_for_empty_document);
+            browser.webRequest.onHeadersReceived.removeListener(strip_frame_blocking_headers);
+            integrity_frame.remove();
+        }
+    })();
 
-    browser.webRequest.onBeforeRequest.removeListener(make_empty_document);
-    browser.webRequest.onHeadersReceived.removeListener(strip_blocking_headers);
-    integrity_frame.remove();
-
-    return client_integrity_token;
+    return user_context.client_integrity_token;
 }
 
 async function get_display_name()
@@ -286,11 +304,12 @@ async function gql_request(operations)
         "Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko",
         "Authorization": `OAuth ${token}`,
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "application/json",
+        "X-Device-Id": await get_x_device_id()
     };
-
+    
     headers["Client-Integrity"] = await get_client_integrity_token(headers);
-    headers["X-Device-Id"] = await get_x_device_id();
+    
 
     const response = await fetch("https://gql.twitch.tv/gql", {
         method: "POST",
