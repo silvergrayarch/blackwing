@@ -1,16 +1,27 @@
 document.addEventListener("DOMContentLoaded", async () => init());
 
-let auth_token = null;
-let x_device_id = null;
+const user_context = {
+    login: null,
+    display_name: null,
+    auth_token: null,
+    x_device_id: null,
+    client_integrity_token: null
+};
+
+const blackwing_context = {
+    cards_per_load: 10,
+    current_page: "following-page",
+
+    category_nodes: [],
+    category_states: [],
+
+    profile_image_cache: new Map(),
+
+    chat_connection: null,
+    chat_disconnect_element: document.getElementById("watching-page")
+};
+
 let client_integrity_token = null;
-
-const follower_count_cache = new Map();
-const channel_text_cache = new Map();
-const cards_per_load = 10;
-let category_nodes = [];
-let category_states = new Map();
-
-let current_page = "following-page";
 
 async function init()
 {
@@ -23,10 +34,22 @@ async function init()
     // const gql_data = await gql_request(ops);
 
     // test_element.textContent = JSON.stringify(gql_data);
+
     document.getElementById("following-page-button").addEventListener("click", () => { swap_page("following-page"); });
     document.getElementById("recommended-page-button").addEventListener("click", () => { swap_page("recommended-page"); });
     document.getElementById("settings-menu-button").addEventListener("click", toggle_settings_menu);
     document.getElementById("load-more-recommended").addEventListener("click", get_recommended_channels);
+    document.getElementById("send-button").addEventListener("click", () => send_chat(blackwing_context.chat_connection));
+    document.getElementById("chat-input").addEventListener("keydown", (keyboard_event) => { if (keyboard_event.key === "Enter" && !keyboard_event.shiftKey) send_chat(blackwing_context.chat_connection); });
+
+    blackwing_context.chat_connection = await open_chat_connection(
+        "silver_grayy",
+        {
+            on_chat_message: (chat_message) => render_message(chat_message.login, chat_message.display_name, chat_message.message_text),
+            on_notice: (notice_id, notice_text) => console.warn(notice_id, notice_text),
+            on_close: (error) => console.log("chat closed", error?.message ?? "")
+        }
+    );
 
     bind_input("filter-tags");
     bind_input("bad-tags");
@@ -39,8 +62,9 @@ async function init()
     bind_input("min-viewers");
     bind_input("min-followers");
 
+    get_followed_channels();
     get_recommended_channels();
-    get_live_followed_channels();
+
 
     window.setInterval(refresh_followed_channels, 90000);
     window.setInterval(refresh_recommended_channels, 90000);
@@ -57,117 +81,120 @@ function bind_input(input_element_id)
 
 function swap_page(page_str)
 {
-    if (current_page === page_str) return;
-    document.getElementById(current_page).hidden = true;
+    if (blackwing_context.current_page === page_str) return;
+    document.getElementById(blackwing_context.current_page).hidden = true;
     document.getElementById(page_str).hidden = false;
-    current_page = page_str;
+    blackwing_context.current_page = page_str;
 
-    if (current_page === "following-page")
+    if (blackwing_context.current_page === "following-page")
         refresh_followed_channels();
-    else if (current_page === "recommended-page")
+    else if (blackwing_context.current_page === "recommended-page")
         refresh_recommended_channels();
 }
 
 function toggle_settings_menu()
 {
-    const active_page = document.getElementById(current_page);
+    const active_page = document.getElementById(blackwing_context.current_page);
     const settings_page = document.getElementById("settings-menu");
     active_page.hidden = !active_page.hidden;
     settings_page.hidden = !settings_page.hidden;
 }
 
-async function get_auth_token()
+async function get_twitch_cookie(name)
 {
-    if (auth_token) return auth_token;
     const cookie = await browser.cookies.get(
         {
             url: "https://www.twitch.tv",
-            name: "auth-token"
+            name
         }
     );
 
-    auth_token = cookie ? cookie.value : null;
-    return auth_token;
+    return cookie ? cookie.value : null;
+}
+
+async function get_user_login() 
+{
+    if (user_context.login) return user_context.login;
+    user_context.login = await get_twitch_cookie("login")
+    return user_context.login;
+}
+
+async function get_auth_token()
+{
+    if (user_context.auth_token) return user_context.auth_token;
+    user_context.auth_token = await get_twitch_cookie("auth-token")
+    return user_context.auth_token;
 }
 
 async function get_x_device_id() 
 {
-    if (x_device_id) return x_device_id;
-    const cookie = await browser.cookies.get(
-        {
-            url: "https://www.twitch.tv",
-            name: "unique_id"
-        }
-    );
-
-    x_device_id = cookie ? cookie.value : null;
-    return x_device_id;
+    if (user_context.x_device_id) return user_context.x_device_id;
+    user_context.x_device_id = await get_twitch_cookie("unique_id")
+    return user_context.x_device_id;
 }
 
-function get_client_integrity_token(request_headers)
+async function get_client_integrity_token(request_headers)
 {
-    if (client_integrity_token) return client_integrity_token;
+    if (user_context.client_integrity_token) return user_context.client_integrity_token;
 
-    client_integrity_token = (async () =>
+    const device_id = await get_x_device_id();
+    const current_tab = await browser.tabs.getCurrent();
+
+    function integrity_promise_in_page(request_headers, device_id)
     {
-        const device_id = await get_x_device_id();
-        const current_tab = await browser.tabs.getCurrent();
-
-        function integrity_promise_in_page(request_headers, device_id)
+        return new Promise((resolve, reject) =>
         {
-            return new Promise((resolve, reject) =>
+            function configureKasadaSdk()
             {
-                function configureKasadaSdk()
+                window.KPSDK.configure(
+                    [
+                        {
+                            protocol: "https:",
+                            method: "POST",
+                            domain: "gql.twitch.tv",
+                            path: "/integrity",
+                        },
+                    ]
+                );
+            }
+
+            async function fetchIntegrityResponse()
+            {
+                const response = await window.fetch("https://gql.twitch.tv/integrity", {
+                    method: "POST",
+                    mode: "cors",
+                    credentials: "omit",
+                    body: null,
+                    headers: { ...request_headers, "x-device-id": device_id },
+                });
+
+                if (response.status !== 200)
                 {
-                    window.KPSDK.configure(
-                        [
-                            {
-                                protocol: "https:",
-                                method: "POST",
-                                domain: "gql.twitch.tv",
-                                path: "/integrity",
-                            },
-                        ]
-                    );
+                    throw new Error(`Unexpected integrity response status ${response.status}`);
                 }
 
-                async function fetchIntegrityResponse()
-                {
-                    const response = await window.fetch("https://gql.twitch.tv/integrity", {
-                        method: "POST",
-                        mode: "cors",
-                        credentials: "omit",
-                        body: null,
-                        headers: { ...request_headers, "x-device-id": device_id },
-                    });
+                const { token } = await response.json();
+                return token;
+            }
 
-                    if (response.status !== 200)
-                    {
-                        throw new Error(`Unexpected integrity response status ${response.status}`);
-                    }
+            document.addEventListener("kpsdk-load", configureKasadaSdk, { once: true });
+            document.addEventListener("kpsdk-ready", () => fetchIntegrityResponse().then(resolve, reject), { once: true });
 
-                    const { token } = await response.json();
-                    return token;
-                }
+            const kasada = document.createElement("script");
+            kasada.addEventListener("error", reject);
+            kasada.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js";
+            document.body.appendChild(kasada);
+        });
+    }
 
-                document.addEventListener("kpsdk-load", configureKasadaSdk, { once: true });
-                document.addEventListener("kpsdk-ready", () => fetchIntegrityResponse().then(resolve, reject), { once: true });
-
-                const kasada = document.createElement("script");
-                kasada.addEventListener("error", reject);
-                kasada.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js";
-                document.body.appendChild(kasada);
-            });
-        }
-
-        // runs promise in the page's own JS world and posts the result back
-        const page_code = `(${integrity_promise_in_page.toString()})(${JSON.stringify(request_headers)}, ${JSON.stringify(device_id)}).then(
+    // runs promise in the page's own JS world and posts the result back
+    const page_code = `(${integrity_promise_in_page.toString()})(${JSON.stringify(request_headers)}, ${JSON.stringify(device_id)}).then(
             (token) => window.postMessage({ blackwing_integrity: true, token }, "*"),
             (error) => window.postMessage({ blackwing_integrity: true, error: String(error) }, "*")
         );`;
 
-        // runs in the frame's content script world, injects page_code, and waits for the postMessage
-        const frame_code = `new Promise((resolve, reject) =>
+    // runs in the frame's content script world, injects page_code, and waits for the postMessage
+    const frame_code = `new Promise((resolve, reject) =>
         {
             const timeout_id = setTimeout(() => reject(new Error("Integrity token timed out")), 20000);
 
@@ -184,66 +211,67 @@ function get_client_integrity_token(request_headers)
             document.documentElement.appendChild(page_script);
         })`;
 
-        const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
+    const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
 
-        // replace the page with an empty document so Twitch's app never loads
-        function swap_body_for_empty_document(details)
+    function make_empty_document(details)
+    {
+        const response_filter = browser.webRequest.filterResponseData(details.requestId);
+        response_filter.ondata = () => { };
+        response_filter.onstop = () =>
         {
-            const response_filter = browser.webRequest.filterResponseData(details.requestId);
-            response_filter.ondata = () => { };
-            response_filter.onstop = () =>
-            {
-                response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
-                response_filter.close();
-            };
-        }
+            response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
+            response_filter.close();
+        };
+    }
 
-        // twitch refuses to be framed, so strip the headers that block it
-        function strip_frame_blocking_headers(details)
-        {
-            return {
-                responseHeaders: details.responseHeaders.filter((header) =>
-                    !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase()))
-            };
-        }
+    function strip_blocking_headers(details)
+    {
+        return { responseHeaders: details.responseHeaders.filter((header) => !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase())) };
+    }
 
-        browser.webRequest.onBeforeRequest.addListener(swap_body_for_empty_document, request_filter, ["blocking"]);
-        browser.webRequest.onHeadersReceived.addListener(strip_frame_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
+    browser.webRequest.onBeforeRequest.addListener(make_empty_document, request_filter, ["blocking"]);
+    browser.webRequest.onHeadersReceived.addListener(strip_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
 
-        const integrity_frame = document.createElement("iframe");
-        integrity_frame.style.display = "none";
+    const integrity_frame = document.createElement("iframe");
+    integrity_frame.style.display = "none";
 
-        try
-        {
-            await new Promise((resolve, reject) =>
-            {
-                integrity_frame.addEventListener("load", resolve, { once: true });
-                integrity_frame.addEventListener("error", reject, { once: true });
-                integrity_frame.src = "https://www.twitch.tv/";
-                document.body.appendChild(integrity_frame);
-            });
+    await new Promise((resolve, reject) =>
+    {
+        integrity_frame.addEventListener("load", resolve, { once: true });
+        integrity_frame.addEventListener("error", reject, { once: true });
+        integrity_frame.src = "https://www.twitch.tv/";
+        document.body.appendChild(integrity_frame);
+    });
 
-            const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
-            const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
-            if (!twitch_frame) throw new Error("Twitch integrity frame not found");
+    const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
+    const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
+    if (!twitch_frame) throw new Error("Twitch integrity frame not found");
 
-            const [token] = await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code });
-            return token;
-        }
-        catch (error)
-        {
-            client_integrity_token = null; // so the next call retries
-            throw error;
-        }
-        finally
-        {
-            browser.webRequest.onBeforeRequest.removeListener(swap_body_for_empty_document);
-            browser.webRequest.onHeadersReceived.removeListener(strip_frame_blocking_headers);
-            integrity_frame.remove();
-        }
-    })();
+    user_context.client_integrity_token = await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code });
+
+    browser.webRequest.onBeforeRequest.removeListener(make_empty_document);
+    browser.webRequest.onHeadersReceived.removeListener(strip_blocking_headers);
+    integrity_frame.remove();
 
     return client_integrity_token;
+}
+
+async function get_display_name()
+{
+    if (user_context.display_name) return user_context.display_name;
+
+    const gql_data = await gql_request(
+        [
+            {
+                operationName: "UserDisplayName",
+                query: `query UserDisplayName($login: String!) { user(login: $login, lookupType: ALL) { displayName } }`,
+                variables: { login: await get_user_login() }
+            }
+        ]
+    );
+    user_context.display_name = gql_data[0]?.data?.user?.displayName ?? await get_user_login();
+
+    return user_context.display_name;
 }
 
 async function gql_request(operations)
@@ -347,7 +375,7 @@ function build_cards(parent, edges)
     }
 }
 
-async function get_live_followed_channels()
+async function get_followed_channels()
 {
 
     const followed_live_channels = document.getElementById("live-followed-channels");
@@ -449,63 +477,76 @@ async function load_filters()
     };
 }
 
-function get_follower_count(user_id)
+async function get_follower_count(user_id)
 {
-    if (follower_count_cache.has(user_id)) return follower_count_cache.get(user_id);
-
-    const follower_count = (async () =>
-    {
-        const operations = [
-            {
-                operationName: "ChannelFollowerCount",
-                query: `query ChannelFollowerCount($id: ID!) { user(id: $id) { followers { totalCount } } }`,
-                variables: { "id": user_id }
-            }
-        ];
-        const twitch_response = await gql_request(operations);
-        return twitch_response[0]?.data?.user?.followers?.totalCount ?? 0;
-    })();
-
-    follower_count_cache.set(user_id, follower_count);
-    follower_count.catch(() => follower_count_cache.delete(user_id)); // don't cache failures
-    return follower_count;
+    const operations = [
+        {
+            operationName: "ChannelFollowerCount",
+            query: `query ChannelFollowerCount($id: ID!) { user(id: $id) { followers { totalCount } } }`,
+            variables: { "id": user_id }
+        }
+    ];
+    const gql_data = await gql_request(operations);
+    return gql_data[0]?.data?.user?.followers?.totalCount ?? 0;
 }
 
-function get_channel_text_parts(login)
+async function get_channel_text_parts(login)
 {
-    if (channel_text_cache.has(login)) return channel_text_cache.get(login);
+    const operations = [
+        {
+            operationName: "ChannelDescription",
+            query: `query ChannelDescription($login: String!) { user(login: $login) { description } }`,
+            variables: { login }
+        },
+        {
+            operationName: "ChannelPanels",
+            query: `query ChannelPanels($login: String!) { user(login: $login) { panels { type ... on DefaultPanel { description } } } }`,
+            variables: { login }
+        },
+        {
+            operationName: "Chat_ChatRules",
+            query: `query Chat_ChatRules($login: String!) { user(login: $login) { chatSettings { rules } } }`,
+            variables: { login }
+        }
+    ];
 
-    const channel_text_parts = (async () =>
-    {
-        const operations = [
-            {
-                operationName: "ChannelDescription",
-                query: `query ChannelDescription($login: String!) { user(login: $login) { description } }`,
-                variables: { login }
-            },
-            {
-                operationName: "ChannelPanels",
-                query: `query ChannelPanels($login: String!) { user(login: $login) { panels { type ... on DefaultPanel { description } } } }`,
-                variables: { login }
-            },
-            {
-                operationName: "Chat_ChatRules",
-                query: `query Chat_ChatRules($login: String!) { user(login: $login) { chatSettings { rules } } }`,
-                variables: { login }
-            }
-        ];
-        const twitch_response = await gql_request(operations);
+    const gql_data = await gql_request(operations);
 
-        return {
-            description: (twitch_response[0]?.data?.user?.description ?? "").toLowerCase(),
-            panels: (twitch_response[1]?.data?.user?.panels ?? []).map(panel => panel.description ?? "").join(" ").toLowerCase(),
-            rules: (twitch_response[2]?.data?.user?.chatSettings?.rules ?? []).join(" ").toLowerCase()
-        };
-    })();
-
-    channel_text_cache.set(login, channel_text_parts);
-    return channel_text_parts;
+    return {
+        description: (gql_data[0]?.data?.user?.description ?? "").toLowerCase(),
+        panels: (gql_data[1]?.data?.user?.panels ?? []).map(panel => panel.description ?? "").join(" ").toLowerCase(),
+        rules: (gql_data[2]?.data?.user?.chatSettings?.rules ?? []).join(" ").toLowerCase()
+    };
 }
+
+async function get_profile_image_url(login)
+{
+    if (blackwing_context.profile_image_cache.has(login)) return blackwing_context.profile_image_cache.get(login);
+
+    const gql_data = await gql_request(
+        [
+            {
+                extensions: {
+                    persistedQuery: {
+                        sha256Hash: "004d506dc9c3635b946941db4f1790055fd3036742f5662eecde19f54ad4ec20",
+                        version: 1
+                    }
+                },
+                operationName: "UserProfileImage",
+                variables: {
+                    login
+                }
+            }
+        ]
+    );
+
+    const profile_image_url = gql_data[0]?.data?.user?.profileImageURL ?? null;
+    if (!profile_image_url) return null;
+
+    blackwing_context.profile_image_cache.set(login, profile_image_url);
+    return profile_image_url;
+}
+
 
 function evaluate_boolean_expression(expression)
 {
@@ -609,10 +650,10 @@ async function get_category_nodes()
         ]
     );
 
-    category_nodes = gql_data[0].data.currentUser.followedGames.nodes;
+    blackwing_context.category_nodes = gql_data[0].data.currentUser.followedGames.nodes;
 
-    for (const node of category_nodes)
-        category_states.set(node.slug, { cursor: undefined, finished: false, seen: new Set() });
+    for (const node of blackwing_context.category_nodes)
+        blackwing_context.category_states.set(node.slug, { cursor: undefined, finished: false, seen: new Set() });
 }
 
 async function get_recommended_channels()
@@ -626,22 +667,21 @@ async function get_recommended_channels()
 
     try
     {
-        if (category_nodes.length === 0)
+        if (blackwing_context.category_nodes.length === 0)
             await get_category_nodes();
 
         const filters = await load_filters();
 
         let cards_added = 0;
-        while (cards_added < cards_per_load)
+        while (cards_added < blackwing_context.cards_per_load)
         {
-            const unfinished_nodes = category_nodes.filter(node => !category_states.get(node.slug).finished);
+            const unfinished_nodes = blackwing_context.category_nodes.filter(node => !blackwing_context.category_states.get(node.slug).finished);
             if (unfinished_nodes.length === 0)
                 break;
 
             for (const node of unfinished_nodes)
             {
-                // await new Promise(r => setTimeout(r, 250));
-                const state = category_states.get(node.slug);
+                const state = blackwing_context.category_states.get(node.slug);
 
                 const response = await gql_request(game_query(node.slug, state.cursor));
 
@@ -693,7 +733,7 @@ async function get_recommended_channels()
                 if (past_max_viewers || !streams.pageInfo.hasNextPage)
                     state.finished = true;
 
-                if (cards_added >= cards_per_load)
+                if (cards_added >= blackwing_context.cards_per_load)
                     break;
             }
         }
@@ -707,53 +747,267 @@ async function get_recommended_channels()
         load_more_button.disabled = false;
 
         // when every game has been fully exhausted hide the Load More button
-        load_more_button.hidden = category_nodes.length > 0 && category_nodes.every(node => category_states.get(node.slug).finished);
+        load_more_button.hidden = blackwing_context.category_nodes.length > 0 && blackwing_context.category_nodes.every(node => blackwing_context.category_states.get(node.slug).finished);
     }
 }
 
 async function refresh_followed_channels() 
 {
-    if (document.getElementById("following-page").hidden) return;
-    // const cards = document.querySelectorAll("#following-page .stream-card");
-
-    // const operations = [];
-
-    // for (const card of cards)
-    // {
-    //     operations.push(
-    //         {
-    //             "extensions": {
-    //                 "persistedQuery": {
-    //                     "sha256Hash": "ad022ca32220d5523d03a23cbcb5beaa1e0999889c1f8f78f9f2520dafb5cae6",
-    //                     "version": 1
-    //                 }
-    //             },
-    //             "operationName": "StreamMetadata",
-    //             "variables": {
-    //                 "channelLogin": card.querySelectorAll(".username")[0].textContent.toLowerCase()
-    //             }
-    //         }
-    //     )
-
-    // }
-
-    // const gql_data = await gql_request(operations);
-
-    // for (var i = 0; i < cards.length; ++i)
-    // {
-    //     if (!gql_data[i].data?.user?.stream?.type || gql_data[i].data?.user?.stream?.type == null)
-    //         cards[i].remove();
-    //     else
-    //     {
-    //         const preview_image = cards[i].querySelectorAll(".profile-image img")[0];
-    //         preview_image.src = preview_image.src;
-    //     }
-    // }
+    // const following_page = document.getElementById("following-page");
+    // if (following_page.hidden) return;
+    // following_page.innerHTML = "";
+    // await get_followed_channels();
 }
 
 async function refresh_recommended_channels()
 {
-    if (document.getElementById("recommended-page").hidden) return;
+    // if (document.getElementById("recommended-page").hidden) return;
     // document.getElementById("recommended-channels").innerHTML = "";
     // await get_recommended_channels();
+}
+
+// splits "key=value;key=value" into { key: "value", ... }
+function parse_tag_string(tag)
+{
+    const tags_by_name = {};
+
+    // every tag is one "name=value" pair separated by ;
+    for (const pair of tag.split(";"))
+    {
+        // split on the FIRST "=" only, since values can contain "=" themselves
+        const separator_ndex = pair.indexOf("=");
+        const name = pair.slice(0, separator_ndex);
+
+        // everything after the "=" is the value (can be an empty string)
+        tags_by_name[name] = pair.slice(separator_ndex + 1);
+    }
+    return tags_by_name;
+}
+
+// turns one raw IRC line into its parts
+// "@tags :nick!user@host PRIVMSG #channel :message text"
+function parse_irc_line(raw_line)
+{
+    // remainder is what's left to parse, each step below removes the part it handled
+    let remainder = raw_line;
+    let tags_by_name = {};
+    let sender_prefix = "";
+
+    // a line with tags starts with "@", the tag block ends at the first space
+    if (remainder.startsWith("@"))
+    {
+        const tag_end_index = remainder.indexOf(" ");
+
+        // slice(1, ...) skips the "@" itself
+        tags_by_name = parse_tag_string(remainder.slice(1, tag_end_index));
+
+        // drop the tag block and its trailing space
+        remainder = remainder.slice(tag_end_index + 1);
+    }
+
+    // the sender prefix starts with ":" and ends at the next space
+    if (remainder.startsWith(":"))
+    {
+        const prefix_end_index = remainder.indexOf(" ");
+
+        // "nick!user@host", slice(1, ...) skips the ":"
+        sender_prefix = remainder.slice(1, prefix_end_index);
+        remainder = remainder.slice(prefix_end_index + 1);
+    }
+
+    // message text is everything after the first " :", so colons inside it are safe
+    const trailing_text_index = remainder.indexOf(" :");
+
+    // the part before " :" is the command and its parameters (e.g. "PRIVMSG #channel")
+    const head_section = trailing_text_index === -1 ? remainder : remainder.slice(0, trailing_text_index);
+
+    // the part after " :" is the free text (the chat message, a notice, a PING payload)
+    const trailing_text = trailing_text_index === -1 ? "" : remainder.slice(trailing_text_index + 2);
+
+    // first word is the command, the rest are parameters (the channel, for PRIVMSG)
+    const [command, ...parameters] = head_section.split(" ");
+
+    return { tags_by_name, sender_prefix, command, parameters, trailing_text };
+}
+
+// opens the socket and logs in, resolves with { send_message, close } once the channel is joined
+async function open_chat_connection(channel_login, handlers = {})
+{
+    // both come from your twitch cookies
+    const oauth_token = await get_auth_token();
+    const account_login = await get_user_login();
+
+    // a missing cookie means you aren't logged in, so there's nothing to connect with
+    if (!oauth_token || !account_login)
+    {
+        throw new Error("Not logged into Twitch. Missing auth-token or login cookie.");
+    }
+
+    // don't connect if the page that owns the connection is already hidden
+    if (blackwing_context.chat_disconnect_element.hidden)
+    {
+        throw new Error("chat_disconnect_element is missing or hidden");
+    }
+
+    // wrapped in a promise so the caller can await "joined and ready", not just "socket opened"
+    return new Promise((resolve, reject) =>
+    {
+        const chat_socket = new WebSocket("wss://irc-ws.chat.twitch.tv:443");
+
+        // guards close_connection so it only runs its cleanup once
+        let connection_is_closed = false;
+
+        // true after the first USERSTATE, so the join is only reported once
+        let join_confirmed = false;
+
+        // gives up if the join isn't confirmed within 10 seconds
+        const join_timeout_id = setTimeout(() => close_connection(new Error("Timed out joining channel")), 10000);
+
+        // fires when an attribute on the element changes, filtered to only "hidden"
+        const hidden_attribute_observer = new MutationObserver(() => { if (blackwing_context.chat_disconnect_element.hidden) close_connection(); });
+        hidden_attribute_observer.observe(blackwing_context.chat_disconnect_element, { attributes: true, attributeFilter: ["hidden"] });
+
+        // the single exit path: every way the connection can end goes through here
+        function close_connection(error)
+        {
+            // chat_socket.close() below triggers onclose, which calls this again, so bail on the second call
+            if (connection_is_closed) return;
+            connection_is_closed = true;
+
+            clearTimeout(join_timeout_id);
+            hidden_attribute_observer.disconnect();
+            chat_socket.close();
+
+            // if resolve already ran this does nothing, if the join never finished it rejects the await
+            reject(error ?? new Error("Closed before joining channel"));
+            handlers.on_close?.(error);
+        }
+
+        // one place to send, so every line goes through the same call
+        function send_irc_line(irc_line)
+        {
+            chat_socket.send(irc_line);
+        }
+
+        // what the caller uses to send chat
+        function send_message(message_text)
+        {
+            if (connection_is_closed) throw new Error("Chat connection is closed");
+
+            // strip newlines so the text can't inject extra IRC commands, and respect the 500 char cap
+            const clean_message_text = message_text.replace(/[\r\n]+/g, " ").slice(0, 500);
+            send_irc_line(`PRIVMSG #${channel_login} :${clean_message_text}`);
+        }
+
+        // socket is connected, now ask for tags and log in (the handshake from your DevTools capture)
+        chat_socket.onopen = () =>
+        {
+            send_irc_line("CAP REQ :twitch.tv/tags twitch.tv/commands");
+            send_irc_line(`PASS oauth:${oauth_token}`);
+            send_irc_line(`NICK ${account_login}`);
+        };
+
+        // runs for every frame the server sends
+        chat_socket.onmessage = (message_event) =>
+        {
+            // one frame can hold several lines separated by \r\n
+            const received_lines = message_event.data.split("\r\n").filter(Boolean);
+
+            for (const received_line of received_lines)
+            {
+                const { tags_by_name, sender_prefix, command, trailing_text } = parse_irc_line(received_line);
+
+                if (command === "PING")
+                {
+                    // server checks you're alive, no PONG means it drops you
+                    send_irc_line(`PONG :${trailing_text}`);
+                }
+                else if (command === "001")
+                {
+                    // 001 is the welcome line, which means login worked, so it's safe to join the channel
+                    send_irc_line(`JOIN #${channel_login}`);
+                }
+                else if (command === "USERSTATE" && !join_confirmed)
+                {
+                    // first USERSTATE is the reply to JOIN, so the connection is ready
+                    join_confirmed = true;
+                    clearTimeout(join_timeout_id);
+
+                    // this is what the caller's await gets back
+                    resolve({ send_message, close: () => close_connection() });
+                }
+                else if (command === "NOTICE")
+                {
+                    // msg-id tells you why, e.g. msg_duplicate, msg_ratelimit, msg_subsonly
+                    handlers.on_notice?.(tags_by_name["msg-id"] ?? "notice", trailing_text);
+                }
+                else if (command === "PRIVMSG")
+                {
+                    // someone sent a chat message, hand the useful parts to the caller
+                    handlers.on_chat_message?.(
+                        {
+                            // lowercase login, comes before the "!" in "nick!user@host"
+                            login: sender_prefix.split("!")[0],
+
+                            // capitalized name from the tag, falls back to the login if the tag is empty
+                            display_name: tags_by_name["display-name"] || sender_prefix.split("!")[0],
+
+                            // send time in milliseconds since 1970
+                            sent_at_milliseconds: Number(tags_by_name["tmi-sent-ts"]),
+                            message_text: trailing_text,
+
+                            // all the other tags (badges, color, emotes, ...) if you need them later
+                            tags_by_name
+                        }
+                    );
+                }
+            }
+        };
+
+        // the browser gives no error details for websockets, so this is a generic message
+        chat_socket.onerror = () => close_connection(new Error("Chat socket error"));
+
+        // server hung up or the network dropped
+        chat_socket.onclose = () => close_connection();
+    });
+}
+
+
+async function render_message(login, display_name, message)
+{
+    const chat_messages = document.getElementById("chat-messages");
+
+    const message_row = document.createElement("div");
+    message_row.className = "chat-message";
+
+    const profile_image = document.createElement("img");
+    profile_image.className = "chat-profile-image";
+
+    const message_text = document.createElement("span");
+    message_text.textContent = `${display_name}: ${message}`;
+
+    message_row.append(profile_image, message_text);
+    chat_messages.append(message_row);
+
+    const profile_image_url = await get_profile_image_url(login);
+    profile_image.src = profile_image_url;
+    
+}
+
+async function send_chat(chat_connection)
+{
+    const send_button = document.getElementById("send-button");
+    const chat_input = document.getElementById("chat-input");
+    const message = chat_input.value.trim();
+
+    if (!message) return;
+    send_button.disabled = true;
+
+    chat_connection.send_message(message);
+    send_button.disabled = false;
+
+    const login = await get_user_login();
+    const username = await get_display_name();
+    render_message(login, username, message);
+    chat_input.value = "";
 }

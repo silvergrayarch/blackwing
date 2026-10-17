@@ -284,3 +284,26 @@ input:focus {
     color: var(--white-1);
     background: var(--purple-1);
 }
+
+.chat-message {
+    gap: 12px;
+    display: flex;
+    padding: 4px 8px;
+    border-radius: 4px;
+    align-items: flex-start;
+}
+
+.chat-message img {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    object-fit: cover;
+    border-radius: 50%;
+    background: var(--gray-3);
+}
+
+.chat-message span {
+    min-width: 0;
+    line-height: 32px;
+    overflow-wrap: anywhere;
+}
