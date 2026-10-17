@@ -13,7 +13,7 @@ const blackwing_context = {
     current_page: "following-page",
 
     category_nodes: [],
-    category_states: [],
+    category_states: new Map(),
 
     profile_image_cache: new Map(),
 
@@ -42,14 +42,14 @@ async function init()
     document.getElementById("send-button").addEventListener("click", () => send_chat(blackwing_context.chat_connection));
     document.getElementById("chat-input").addEventListener("keydown", (keyboard_event) => { if (keyboard_event.key === "Enter" && !keyboard_event.shiftKey) send_chat(blackwing_context.chat_connection); });
 
-    blackwing_context.chat_connection = await open_chat_connection(
-        "silver_grayy",
-        {
-            on_chat_message: (chat_message) => render_message(chat_message.login, chat_message.display_name, chat_message.message_text),
-            on_notice: (notice_id, notice_text) => console.warn(notice_id, notice_text),
-            on_close: (error) => console.log("chat closed", error?.message ?? "")
-        }
-    );
+    // blackwing_context.chat_connection = await open_chat_connection(
+    //     "silver_grayy",
+    //     {
+    //         on_chat_message: (chat_message) => render_message(chat_message.login, chat_message.display_name, chat_message.message_text),
+    //         on_notice: (notice_id, notice_text) => console.warn(notice_id, notice_text),
+    //         on_close: (error) => console.log("chat closed", error?.message ?? "")
+    //     }
+    // );
 
     bind_input("filter-tags");
     bind_input("bad-tags");
@@ -133,69 +133,67 @@ async function get_x_device_id()
     return user_context.x_device_id;
 }
 
-function get_client_integrity_token(headers)
+async function get_client_integrity_token(headers)
 {
     if (user_context.client_integrity_token) return user_context.client_integrity_token;
 
-    user_context.client_integrity_token = (async () =>
+    const current_tab = await browser.tabs.getCurrent();
+
+    function integrity_promise_in_page(headers)
     {
-        const current_tab = await browser.tabs.getCurrent();
-
-        function integrity_promise_in_page(headers)
+        return new Promise((resolve, reject) =>
         {
-            return new Promise((resolve, reject) =>
+            function configure_kasada_sdk()
             {
-                function configureKasadaSdk()
+                window.KPSDK.configure(
+                    [
+                        {
+                            protocol: "https:",
+                            method: "POST",
+                            domain: "gql.twitch.tv",
+                            path: "/integrity",
+                        },
+                    ]
+                );
+            }
+
+            async function fetch_integrity_response()
+            {
+                const response = await window.fetch("https://gql.twitch.tv/integrity", {
+                    method: "POST",
+                    mode: "cors",
+                    credentials: "omit",
+                    body: null,
+                    headers,
+                });
+
+                if (response.status !== 200)
                 {
-                    window.KPSDK.configure(
-                        [
-                            {
-                                protocol: "https:",
-                                method: "POST",
-                                domain: "gql.twitch.tv",
-                                path: "/integrity",
-                            },
-                        ]
-                    );
+                    throw new Error(`Unexpected integrity response status ${response.status}`);
                 }
 
-                async function fetchIntegrityResponse()
-                {
-                    const response = await window.fetch("https://gql.twitch.tv/integrity", {
-                        method: "POST",
-                        mode: "cors",
-                        credentials: "omit",
-                        body: null,
-                        headers,
-                    });
+                const { token } = await response.json();
+                return token;
+            }
 
-                    if (response.status !== 200)
-                    {
-                        throw new Error(`Unexpected integrity response status ${response.status}`);
-                    }
+            document.addEventListener("kpsdk-load", configure_kasada_sdk, { once: true });
+            document.addEventListener("kpsdk-ready", () => fetch_integrity_response().then(resolve, reject), { once: true });
 
-                    const { token } = await response.json();
-                    return token;
-                }
+            const kasada = document.createElement("script");
+            kasada.addEventListener("error", reject);
+            kasada.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js";
+            document.body.appendChild(kasada);
+        });
+    }
 
-                document.addEventListener("kpsdk-load", configureKasadaSdk, { once: true });
-                document.addEventListener("kpsdk-ready", () => fetchIntegrityResponse().then(resolve, reject), { once: true });
-
-                const kasada = document.createElement("script");
-                kasada.addEventListener("error", reject);
-                kasada.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js";
-                document.body.appendChild(kasada);
-            });
-        }
-
-        // runs promise in the page's own JS world and posts the result back
-        const page_code = `(${integrity_promise_in_page.toString()})(${JSON.stringify(headers)}).then(
+    // runs promise in the page's own JS world and posts the result back
+    const page_code = `(${integrity_promise_in_page.toString()})(${JSON.stringify(headers)}).then(
             (token) => window.postMessage({ blackwing_integrity: true, token }, "*"),
             (error) => window.postMessage({ blackwing_integrity: true, error: String(error) }, "*")
         );`;
 
-        // runs in the frame's content script world, injects page_code, and waits for the postMessage
-        const frame_code = `new Promise((resolve, reject) =>
+    // runs in the frame's content script world, injects page_code, and waits for the postMessage
+    const frame_code = `new Promise((resolve, reject) =>
         {
             const timeout_id = setTimeout(() => reject(new Error("Integrity token timed out")), 20000);
 
@@ -212,65 +210,53 @@ function get_client_integrity_token(headers)
             document.documentElement.appendChild(page_script);
         })`;
 
-        const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
+    const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
 
-        // replace the page with an empty document so Twitch's app never loads
-        function swap_body_for_empty_document(details)
+    // replace the page with an empty document so Twitch's app never loads
+    function swap_body_for_empty_document(details)
+    {
+        const response_filter = browser.webRequest.filterResponseData(details.requestId);
+        response_filter.ondata = () => { };
+        response_filter.onstop = () =>
         {
-            const response_filter = browser.webRequest.filterResponseData(details.requestId);
-            response_filter.ondata = () => { };
-            response_filter.onstop = () =>
-            {
-                response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
-                response_filter.close();
-            };
-        }
+            response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
+            response_filter.close();
+        };
+    }
 
-        // twitch refuses to be framed, so strip the headers that block it
-        function strip_frame_blocking_headers(details)
-        {
-            return {
-                responseHeaders: details.responseHeaders.filter((header) =>
-                    !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase()))
-            };
-        }
+    // twitch refuses to be framed, so strip the headers that block it
+    function strip_frame_blocking_headers(details)
+    {
+        return {
+            responseHeaders: details.responseHeaders.filter((header) =>
+                !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase()))
+        };
+    }
 
-        browser.webRequest.onBeforeRequest.addListener(swap_body_for_empty_document, request_filter, ["blocking"]);
-        browser.webRequest.onHeadersReceived.addListener(strip_frame_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
+    browser.webRequest.onBeforeRequest.addListener(swap_body_for_empty_document, request_filter, ["blocking"]);
+    browser.webRequest.onHeadersReceived.addListener(strip_frame_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
 
-        const integrity_frame = document.createElement("iframe");
-        integrity_frame.style.display = "none";
+    const integrity_frame = document.createElement("iframe");
+    integrity_frame.style.display = "none";
 
-        try
-        {
-            await new Promise((resolve, reject) =>
-            {
-                integrity_frame.addEventListener("load", resolve, { once: true });
-                integrity_frame.addEventListener("error", reject, { once: true });
-                integrity_frame.src = "https://www.twitch.tv/";
-                document.body.appendChild(integrity_frame);
-            });
 
-            const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
-            const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
-            if (!twitch_frame) throw new Error("Twitch integrity frame not found");
+    await new Promise((resolve, reject) =>
+    {
+        integrity_frame.addEventListener("load", resolve, { once: true });
+        integrity_frame.addEventListener("error", reject, { once: true });
+        integrity_frame.src = "https://www.twitch.tv/";
+        document.body.appendChild(integrity_frame);
+    });
 
-            const [token] = await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code });
-            return token;
-        }
-        catch (error)
-        {
-            user_context.client_integrity_token = null; // so the next call retries
-            throw error;
-        }
-        finally
-        {
-            browser.webRequest.onBeforeRequest.removeListener(swap_body_for_empty_document);
-            browser.webRequest.onHeadersReceived.removeListener(strip_frame_blocking_headers);
-            integrity_frame.remove();
-        }
-    })();
+    const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
+    const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
+    if (!twitch_frame) throw new Error("Twitch integrity frame not found");
 
+    user_context.client_integrity_token = (await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code }))[0];
+    browser.webRequest.onBeforeRequest.removeListener(swap_body_for_empty_document);
+    browser.webRequest.onHeadersReceived.removeListener(strip_frame_blocking_headers);
+
+    integrity_frame.remove();
     return user_context.client_integrity_token;
 }
 
@@ -305,11 +291,11 @@ async function gql_request(operations)
         "Authorization": `OAuth ${token}`,
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "X-Device-Id": await get_x_device_id()
+        "x-device-id": await get_x_device_id()
     };
-    
+
     headers["Client-Integrity"] = await get_client_integrity_token(headers);
-    
+
 
     const response = await fetch("https://gql.twitch.tv/gql", {
         method: "POST",
@@ -1010,7 +996,7 @@ async function render_message(login, display_name, message)
 
     const profile_image_url = await get_profile_image_url(login);
     profile_image.src = profile_image_url;
-    
+
 }
 
 async function send_chat(chat_connection)

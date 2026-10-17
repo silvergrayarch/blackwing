@@ -16,7 +16,7 @@ body {
     font-family: Arial, sans-serif;
 }
 
-header {
+body header {
     top: 0;
     display: flex;
     position: sticky;
@@ -228,7 +228,7 @@ label {
     border-radius: 999px;
     color: var(--white-1);
     background: var(--black-1);
-    
+
 }
 
 input {
@@ -287,13 +287,17 @@ input:focus {
 
 .chat-message {
     gap: 12px;
-    display: flex;
     padding: 4px 8px;
     border-radius: 4px;
-    align-items: flex-start;
 }
 
-.chat-message img {
+.chat-message header {
+    display: flex;
+    align-items: flex-start;    
+    background-color: transparent;
+}
+
+.chat-message header img {
     width: 32px;
     height: 32px;
     flex-shrink: 0;
@@ -302,8 +306,15 @@ input:focus {
     background: var(--gray-3);
 }
 
-.chat-message span {
+.chat-message header span {
     min-width: 0;
     line-height: 32px;
+    margin-left: 8px;
     overflow-wrap: anywhere;
+}
+
+.chat-message p 
+{
+    margin-top: 8px;
+    margin-left: 12px;
 }
