@@ -293,7 +293,7 @@ input:focus {
 
 .chat-message header {
     display: flex;
-    align-items: flex-start;    
+    align-items: flex-start;
     background-color: transparent;
 }
 
@@ -313,8 +313,7 @@ input:focus {
     overflow-wrap: anywhere;
 }
 
-.chat-message p 
-{
+.chat-message p {
     margin-top: 8px;
     margin-left: 12px;
 }

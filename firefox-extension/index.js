@@ -982,21 +982,23 @@ async function render_message(login, display_name, message)
 {
     const chat_messages = document.getElementById("chat-messages");
 
-    const message_row = document.createElement("div");
-    message_row.className = "chat-message";
+    const message_div = document.createElement("div");
+    message_div.className = "chat-message";
+
+    const header = document.createElement("header");
 
     const profile_image = document.createElement("img");
-    profile_image.className = "chat-profile-image";
+    profile_image.src = await get_profile_image_url(login);
 
-    const message_text = document.createElement("span");
-    message_text.textContent = `${display_name}: ${message}`;
+    const username = document.createElement("span");
+    username.textContent = `${display_name}`;
 
-    message_row.append(profile_image, message_text);
-    chat_messages.append(message_row);
+    const message_text = document.createElement("p");
+    message_text.textContent = `${message}`;
 
-    const profile_image_url = await get_profile_image_url(login);
-    profile_image.src = profile_image_url;
-
+    header.append(profile_image, username);
+    message_div.append(header, message_text);
+    chat_messages.append(message_div);
 }
 
 async function send_chat(chat_connection)
