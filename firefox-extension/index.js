@@ -29,8 +29,6 @@ const video_player_context = {
     backup_media_playlist_url: null
 };
 
-let client_integrity_token = null;
-
 async function init()
 {
     // const test_element = document.getElementById("test");
