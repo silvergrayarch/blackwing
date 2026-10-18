@@ -14,11 +14,19 @@ const blackwing_context = {
 
     category_nodes: [],
     category_states: new Map(),
+};
 
+const chat_context = {
     profile_image_cache: new Map(),
 
     chat_connection: null,
     chat_disconnect_element: document.getElementById("watching-page")
+};
+
+const video_player_context = {
+    player_type: null,
+    channel_login: null,
+    backup_media_playlist_url: null
 };
 
 let client_integrity_token = null;
@@ -39,17 +47,8 @@ async function init()
     document.getElementById("recommended-page-button").addEventListener("click", () => { swap_page("recommended-page"); });
     document.getElementById("settings-menu-button").addEventListener("click", toggle_settings_menu);
     document.getElementById("load-more-recommended").addEventListener("click", get_recommended_channels);
-    document.getElementById("send-button").addEventListener("click", () => send_chat(blackwing_context.chat_connection));
-    document.getElementById("chat-input").addEventListener("keydown", (keyboard_event) => { if (keyboard_event.key === "Enter" && !keyboard_event.shiftKey) send_chat(blackwing_context.chat_connection); });
-
-    // blackwing_context.chat_connection = await open_chat_connection(
-    //     "silver_grayy",
-    //     {
-    //         on_chat_message: (chat_message) => render_message(chat_message.login, chat_message.display_name, chat_message.message_text),
-    //         on_notice: (notice_id, notice_text) => console.warn(notice_id, notice_text),
-    //         on_close: (error) => console.log("chat closed", error?.message ?? "")
-    //     }
-    // );
+    document.getElementById("send-button").addEventListener("click", () => send_chat());
+    document.getElementById("chat-input").addEventListener("keydown", (keyboard_event) => { if (keyboard_event.key === "Enter" && !keyboard_event.shiftKey) send_chat(); });
 
     bind_input("filter-tags");
     bind_input("bad-tags");
@@ -278,6 +277,46 @@ async function get_display_name()
     return user_context.display_name;
 }
 
+
+async function get_playback_access_token()
+{
+    const gql_data = await gql_request(
+        [
+            {
+                operationName: "PlaybackAccessToken_Template",
+                query: `query PlaybackAccessToken_Template($login: String!, $isLive: Boolean!, $vodID: ID!, $isVod: Boolean!, $playerType: String!, $platform: String!) {  streamPlaybackAccessToken(channelName: $login, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isLive) {    value    signature   authorization { isForbidden forbiddenReasonCode }   __typename  }  videoPlaybackAccessToken(id: $vodID, params: {platform: $platform, playerBackend: "mediaplayer", playerType: $playerType}) @include(if: $isVod) {    value    signature   __typename  }}`,
+                variables: { isLive: true, login: video_player_context.channel_login, isVod: false, vodID: "", playerType: video_player_context.player_type, platform: video_player_context.player_type === "autoplay" ? "android" : "web" }
+            }
+        ]
+    );
+
+    const stream_access_token = gql_data[0]?.data?.streamPlaybackAccessToken ?? null;
+
+    if (!stream_access_token)
+    {
+        console.error("Twitch returned no stream playback token.", gql_data[0]?.errors);
+        return null;
+    }
+
+    if (stream_access_token.authorization?.isForbidden)
+    {
+        console.warn(`Twitch forbids this stream: ${stream_access_token.authorization.forbiddenReasonCode}`);
+        return null;
+    }
+
+    if (!stream_access_token.value || !stream_access_token.signature)
+    {
+        console.error("Playback token or signature is empty.", {
+            hasValue: Boolean(stream_access_token.value),
+            hasSignature: Boolean(stream_access_token.signature)
+        });
+        return null;
+    }
+
+    return stream_access_token;
+}
+
+
 async function gql_request(operations)
 {
     const token = await get_auth_token();
@@ -305,6 +344,13 @@ async function gql_request(operations)
 
     if (!response.ok) throw new Error(`GQL request failed: ${response.status}`);
     return response.json();
+}
+
+async function fetch_text(url)
+{
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return response.text();
 }
 
 function build_cards(parent, edges)
@@ -369,13 +415,25 @@ function build_cards(parent, edges)
 
         const open = document.createElement("a");
         open.className = "open";
-        open.href = `https://www.twitch.tv/${node.login}`;
-        open.target = "_blank";
-        open.rel = "noopener noreferrer";
         open.textContent = "Open Stream";
+        open.addEventListener("click", async () =>
+        {
+            document.getElementById(blackwing_context.current_page).hidden = true;
+            document.getElementById("watching-page").hidden = false;
+            chat_context.chat_connection = await open_chat_connection(
+                `${node.login}`,
+                {
+                    on_chat_message: (chat_message) => render_message(chat_message.login, chat_message.display_name, chat_message.message_text),
+                    on_notice: (notice_id, notice_text) => console.warn(notice_id, notice_text),
+                    on_close: (error) => console.log("chat closed", error?.message ?? "")
+                }
+            );
+
+            play_channel(`${node.login}`, document.getElementById("video-player"));
+        })
 
         stream_card.appendChild(open);
-
+        
         parent.appendChild(stream_card);
     }
 }
@@ -526,7 +584,7 @@ async function get_channel_text_parts(login)
 
 async function get_profile_image_url(login)
 {
-    if (blackwing_context.profile_image_cache.has(login)) return blackwing_context.profile_image_cache.get(login);
+    if (chat_context.profile_image_cache.has(login)) return chat_context.profile_image_cache.get(login);
 
     const gql_data = await gql_request(
         [
@@ -548,7 +606,7 @@ async function get_profile_image_url(login)
     const profile_image_url = gql_data[0]?.data?.user?.profileImageURL ?? null;
     if (!profile_image_url) return null;
 
-    blackwing_context.profile_image_cache.set(login, profile_image_url);
+    chat_context.profile_image_cache.set(login, profile_image_url);
     return profile_image_url;
 }
 
@@ -849,7 +907,7 @@ async function open_chat_connection(channel_login, handlers = {})
     }
 
     // don't connect if the page that owns the connection is already hidden
-    if (blackwing_context.chat_disconnect_element.hidden)
+    if (chat_context.chat_disconnect_element.hidden)
     {
         throw new Error("chat_disconnect_element is missing or hidden");
     }
@@ -869,22 +927,24 @@ async function open_chat_connection(channel_login, handlers = {})
         const join_timeout_id = setTimeout(() => close_connection(new Error("Timed out joining channel")), 10000);
 
         // fires when an attribute on the element changes, filtered to only "hidden"
-        const hidden_attribute_observer = new MutationObserver(() => { if (blackwing_context.chat_disconnect_element.hidden) close_connection(); });
-        hidden_attribute_observer.observe(blackwing_context.chat_disconnect_element, { attributes: true, attributeFilter: ["hidden"] });
+        const hidden_attribute_observer = new MutationObserver(() => { if (chat_context.chat_disconnect_element.hidden) close_connection(); });
+        hidden_attribute_observer.observe(chat_context.chat_disconnect_element, { attributes: true, attributeFilter: ["hidden"] });
 
         // the single exit path: every way the connection can end goes through here
         function close_connection(error)
         {
-            // chat_socket.close() below triggers onclose, which calls this again, so bail on the second call
             if (connection_is_closed) return;
             connection_is_closed = true;
 
             clearTimeout(join_timeout_id);
             hidden_attribute_observer.disconnect();
-            chat_socket.close();
 
-            // if resolve already ran this does nothing, if the join never finished it rejects the await
-            reject(error ?? new Error("Closed before joining channel"));
+            if (chat_socket.readyState < WebSocket.CLOSING)
+                chat_socket.close();
+
+            if (!join_confirmed)
+                reject(error ?? new Error("Closed before joining channel"));
+
             handlers.on_close?.(error);
         }
 
@@ -973,7 +1033,12 @@ async function open_chat_connection(channel_login, handlers = {})
         chat_socket.onerror = () => close_connection(new Error("Chat socket error"));
 
         // server hung up or the network dropped
-        chat_socket.onclose = () => close_connection();
+        chat_socket.onclose = (event) =>
+        {
+            close_connection(
+                new Error(`WebSocket closed: ${event.code} ${event.reason}`)
+            );
+        };
     });
 }
 
@@ -1001,7 +1066,7 @@ async function render_message(login, display_name, message)
     chat_messages.append(message_div);
 }
 
-async function send_chat(chat_connection)
+async function send_chat()
 {
     const send_button = document.getElementById("send-button");
     const chat_input = document.getElementById("chat-input");
@@ -1010,11 +1075,256 @@ async function send_chat(chat_connection)
     if (!message) return;
     send_button.disabled = true;
 
-    chat_connection.send_message(message);
+    chat_context.chat_connection.send_message(message);
     send_button.disabled = false;
 
     const login = await get_user_login();
     const username = await get_display_name();
     render_message(login, username, message);
     chat_input.value = "";
+}
+
+function build_usher_url(access_token)
+{
+    const usher_url = new URL(`https://usher.ttvnw.net/api/channel/hls/${video_player_context.channel_login}.m3u8`);
+    usher_url.searchParams.set("sig", access_token.signature);
+    usher_url.searchParams.set("token", access_token.value);
+    usher_url.searchParams.set("p", String(Math.floor(Math.random() * 999999)));
+    usher_url.searchParams.set("allow_source", "true");
+    usher_url.searchParams.set("allow_audio_only", "true");
+    usher_url.searchParams.set("supported_codecs", "h264");
+    return usher_url.toString();
+}
+
+function get_variant_url(playlist, index)
+{
+    const variant_urls = [];
+    const playlist_lines = playlist.split("\n");
+    for (let line_index = 0; line_index < playlist_lines.length; line_index++)
+    {
+        // the line after each STREAM-INF tag is that quality's url
+        if (playlist_lines[line_index].startsWith("#EXT-X-STREAM-INF:"))
+        {
+            variant_urls.push(playlist_lines[line_index + 1]);
+        }
+    }
+    return variant_urls[index];
+}
+
+function is_ad_daterange(daterange_attributes)
+{
+    return daterange_attributes["CLASS"] === "twitch-stitched-ad"
+        || (daterange_attributes["ID"] ?? "").startsWith("stitched-ad-")
+        || Object.keys(daterange_attributes).some((attribute_name) => attribute_name.startsWith("X-TV-TWITCH-AD-"));
+}
+
+// collects the milliseconds that are ads
+function get_ad_date_ranges(playlist_text)
+{
+    const ad_date_ranges = []; // { start_milliseconds, end_milliseconds }
+    for (const playlist_line of playlist_text.split("\n"))
+    {
+        if (!playlist_line.startsWith("#EXT-X-DATERANGE:")) continue;
+
+        const daterange_attributes = {};
+
+        // turns KEY=value,KEY="quoted value" into { KEY: "value" }
+        for (const attribute_match of playlist_line.slice("#EXT-X-DATERANGE:".length).matchAll(/([A-Z0-9-]+)=("[^"]*"|[^,]*)/g))
+        {
+            // group 1 is the name, group 2 the value, with surrounding quotes removed
+            daterange_attributes[attribute_match[1]] = attribute_match[2].replace(/^"|"$/g, "");
+        }
+
+        if (!is_ad_daterange(daterange_attributes)) continue;
+
+        const start_milliseconds = Date.parse(daterange_attributes["START-DATE"]);
+        const duration_seconds = Number(daterange_attributes["DURATION"] ?? daterange_attributes["PLANNED-DURATION"]);
+        const end_milliseconds = daterange_attributes["END-DATE"] ? Date.parse(daterange_attributes["END-DATE"]) : (Number.isFinite(duration_seconds) ? start_milliseconds + duration_seconds * 1000 : Infinity);
+
+        ad_date_ranges.push({ start_milliseconds, end_milliseconds });
+    }
+    return ad_date_ranges;
+}
+
+// true if the playlist currently contains ads
+function playlist_has_ads(playlist_text)
+{
+    return get_ad_date_ranges(playlist_text).length > 0 || /^#EXTINF:[^,]*,.*Amazon/m.test(playlist_text);
+}
+
+// streamlink's approach: drop the ad segments from the playlist
+function strip_ad_segments(playlist_text)
+{
+    const ad_date_ranges = get_ad_date_ranges(playlist_text);   // windows to cut
+    const kept_lines = [];                                      // playlist lines that survive
+    let pending_segment_lines = [];                             // date + EXTINF lines waiting for their url line
+    let running_date_milliseconds = null;                       // wall clock time of the current segment
+    let segment_duration_milliseconds = 0;                      // length of the current segment
+    let segment_title = "";                                     // EXTINF title of the current segment
+    let removed_leading_segments = 0;                           // ad segments removed before the first kept one
+    let kept_any_segment = false;                               // flips true after the first kept segment
+
+    for (const playlist_line of playlist_text.split("\n"))
+    {
+        if (playlist_line.startsWith("#EXT-X-TWITCH-PREFETCH")) continue;           // prefetch urls would leak ads, drop them
+
+        if (playlist_line.startsWith("#EXT-X-PROGRAM-DATE-TIME:"))
+        {
+            running_date_milliseconds = Date.parse(playlist_line.slice("#EXT-X-PROGRAM-DATE-TIME:".length)); // segment start time
+            pending_segment_lines.push(playlist_line);                              // keep with its segment
+        }
+        else if (playlist_line.startsWith("#EXTINF:"))
+        {
+            const [duration_text, ...title_parts] = playlist_line.slice("#EXTINF:".length).split(","); // "2.000,title"
+            segment_duration_milliseconds = Number(duration_text) * 1000;           // seconds to milliseconds
+            segment_title = title_parts.join(",");                                  // title may contain commas
+            pending_segment_lines.push(playlist_line);                              // keep with its segment
+        }
+        else if (playlist_line.startsWith("#") || playlist_line.trim() === "")
+        {
+            kept_lines.push(playlist_line);                                         // header and other tags pass through
+        }
+        else
+        {
+            // this line is a segment url, decide if the segment is an ad
+            const segment_is_ad = !segment_title.includes("live")   // vaft's test, real segments are titled "live", ad segments aren't
+                || segment_title.includes("Amazon")                  // streamlink's title test
+                || (running_date_milliseconds !== null && ad_date_ranges.some((ad_date_range) => // streamlink's date test
+                    running_date_milliseconds >= ad_date_range.start_milliseconds   // after the ad starts
+                    && running_date_milliseconds < ad_date_range.end_milliseconds)); // and before it ends
+
+            if (segment_is_ad)
+            {
+                if (!kept_any_segment) removed_leading_segments++;                  // count removals at the front
+            }
+            else
+            {
+                kept_lines.push(...pending_segment_lines, playlist_line);           // keep date, EXTINF and url
+                kept_any_segment = true;                                            // later removals are not leading
+            }
+
+            pending_segment_lines = [];                                             // reset for the next segment
+            segment_title = "";                                                     // reset title
+            if (running_date_milliseconds !== null) running_date_milliseconds += segment_duration_milliseconds; // next segment starts after this one
+        }
+    }
+
+    // move the media sequence forward by the removed leading segments so kept segments keep their numbers
+    return kept_lines.join("\n").replace(/#EXT-X-MEDIA-SEQUENCE:(\d+)/, (whole_tag, sequence_text) =>
+        `#EXT-X-MEDIA-SEQUENCE:${Number(sequence_text) + removed_leading_segments}`);
+}
+
+// vaft's approach: look for a backup player type whose playlist has no ads
+async function find_clean_backup_playlist()
+{
+    let clean_backup_playlist = null; // stays null if every backup has ads
+
+    for (const player_type of ["popout", "embed", "mobile_web", "autoplay"])
+    {
+        video_player_context.player_type = player_type;
+
+        const access_token = await get_playback_access_token();
+        if (!access_token) continue;
+
+        const master_playlist = await fetch_text(build_usher_url(access_token));
+        if (!master_playlist) continue;
+
+        const media_playlist_url = get_variant_url(master_playlist, 0);
+        if (!media_playlist_url) continue;
+
+        const media_playlist_text = await fetch_text(media_playlist_url);
+        if (media_playlist_text && !playlist_has_ads(media_playlist_text))
+        {
+            clean_backup_playlist = { media_playlist_url, media_playlist_text };
+            break;
+        }
+    }
+
+    video_player_context.player_type = "popout";
+    return clean_backup_playlist;
+}
+
+// decides what playlist text hls.js gets on every refresh
+async function get_clean_playlist_text(site_playlist_text)
+{
+    if (!playlist_has_ads(site_playlist_text))
+    {
+        video_player_context.backup_media_playlist_url = null;
+        return site_playlist_text;
+    }
+
+    if (video_player_context.backup_media_playlist_url)
+    {
+        const cached_backup_text = await fetch_text(video_player_context.backup_media_playlist_url);
+        if (cached_backup_text && !playlist_has_ads(cached_backup_text)) return cached_backup_text;
+        video_player_context.backup_media_playlist_url = null;
+    }
+
+    const backup_playlist = await find_clean_backup_playlist();
+    if (backup_playlist)
+    {
+        video_player_context.backup_media_playlist_url = backup_playlist.media_playlist_url;
+        return backup_playlist.media_playlist_text;
+    }
+
+    return strip_ad_segments(site_playlist_text);
+}
+
+class AdFilteringLoader extends Hls.DefaultConfig.loader
+{
+    load(load_context, load_config, load_callbacks)
+    {
+        // first load is "manifest", refreshes are "level", video segments are neither
+        const is_playlist_request = load_context.type === "manifest" || load_context.type === "level";
+        if (is_playlist_request)
+        {
+            const original_on_success = load_callbacks.onSuccess;   // hls.js's own success handler
+            load_callbacks.onSuccess = async (response, stats, success_context, network_details) =>
+            {
+                // try/catch: if filtering fails hls.js must still get the original playlist or playback stalls
+                try
+                {
+                    response.data = await get_clean_playlist_text(response.data);   // swap in the filtered playlist
+                }
+                catch (error)
+                {
+                    console.error("Ad filtering failed:", error.message);
+                }
+                original_on_success(response, stats, success_context, network_details); // hand it to hls.js
+            };
+        }
+        super.load(load_context, load_config, load_callbacks);      // do the normal request
+    }
+}
+
+// entry point: plays a live channel in a <video> element
+async function play_channel(channel_login, video_element)
+{
+    video_player_context.player_type = "popup";
+    video_player_context.channel_login = channel_login;
+    video_player_context.backup_media_playlist_url = null;
+
+    const playback_token = await get_playback_access_token();
+    if (!playback_token)
+    {
+        console.error("No playback token");
+        return null;
+    }
+
+
+    const master_playlist = await fetch_text(build_usher_url(playback_token));
+
+    if (!master_playlist)
+    {
+        console.error("Usher refused the request. The channel is probably offline.");
+        return null;
+    }
+
+    const media_playlist_url = get_variant_url(master_playlist, 0);    // source quality
+
+    const hls_player = new Hls({ loader: AdFilteringLoader });  // hls.js using our loader
+    hls_player.loadSource(media_playlist_url);                  // play the media playlist directly
+    hls_player.attachMedia(video_element);                      // draw into the video element
+    video_element.play();                                       // start playback
+    return hls_player;                                          // call .destroy() on it when the page hides
 }

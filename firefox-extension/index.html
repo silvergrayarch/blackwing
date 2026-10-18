@@ -9,7 +9,7 @@
 
 <body>
     <header>
-        <img class="logo" src="icons/icon.png">
+        <img class="logo" src="assets/icon.png">
         <p><strong>Blackwing</strong> (c) 2026 silver_gray</p>
         <button id="following-page-button">Following</button>
         <button id="recommended-page-button">Recommended</button>
@@ -85,28 +85,31 @@
 
         <section id="watching-page" hidden>
             <section id="stream">
+                <div id="video-container">
+                    <video id="video-player" controls></video>
+                </div>
+                
                 <section id="chat">
-                    
                     <div id="chat-messages">
-                        <div class="chat-message">
+                        <!-- <div class="chat-message">
                             <header>
-                                <img src="https://static-cdn.jtvnw.net/jtv_user_pictures/99a1ec8d-530c-4cc9-8267-034cb17cb575-profile_image-70x70.png" class="chat-profile-image">    
+                                <img src="https://static-cdn.jtvnw.net/jtv_user_pictures/99a1ec8d-530c-4cc9-8267-034cb17cb575-profile_image-70x70.png"
+                                    class="chat-profile-image">
                                 <span>${display_name}: </span>
                             </header>
                             <p>${message}</p>
-                        </div>
+                        </div> -->
                     </div>
-                    
-                    <div id="chat-footer">
+                    <footer>
                         <input id="chat-input">
                         <button id="send-button">➩</button>
-                    </div>
-
+                    </footer>
                 </section>
             </section>
     </main>
 
-    <script src="index.js"></script>
+    <script src="assets/hls.min.js"></script>
+    <script type="module" src="index.js"></script>
 </body>
 
 </html>
