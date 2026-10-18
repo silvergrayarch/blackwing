@@ -38,7 +38,6 @@ header button {
     outline: none;
     cursor: pointer;
     margin-left: 10px;
-
     color: var(--purple-1);
     background-color: var(--gray-2);
 }

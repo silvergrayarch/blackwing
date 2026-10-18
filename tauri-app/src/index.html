@@ -1,39 +1,32 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="stylesheet" href="styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri App</title>
-    <script type="module" src="/main.js" defer></script>
-  </head>
 
-  <body>
-    <main class="container">
-      <h1>Welcome to Tauri</h1>
+<head>
+    <meta charset="UTF-8">
+    <title>Blackwing</title>
+    <link rel="stylesheet" href="main.css">
+    <link rel="stylesheet" href="cards.css">
+</head>
 
-      <div class="row">
-        <a href="https://tauri.app" target="_blank">
-          <img src="/assets/tauri.svg" class="logo tauri" alt="Tauri logo" />
-        </a>
-        <a
-          href="https://developer.mozilla.org/en-US/docs/Web/JavaScript"
-          target="_blank"
-        >
-          <img
-            src="/assets/javascript.svg"
-            class="logo vanilla"
-            alt="JavaScript logo"
-          />
-        </a>
-      </div>
-      <p>Click on the Tauri logo to learn more about the framework</p>
+<body>
+    <header>
+        <img class="logo" src="assets/logo.png">
+        <p><strong>Blackwing</strong> (c) 2026 silver_gray</p>
+        <a id="settings"  href="settings.html">⚙</a>
+    </header>
+    <main>
+        <section>
+            <p>Live Followed Channels</p>
+            <div class="channels" id="followed-channels"></div>
+        </section>
 
-      <form class="row" id="greet-form">
-        <input id="greet-input" placeholder="Enter a name..." />
-        <button type="submit">Greet</button>
-      </form>
-      <p id="greet-msg"></p>
+        <section>
+            <p>Recommended Channels</p>
+            <div class="channels" id="recommended-channels"></div>
+            <button id="load-more-recommended" hidden>Load more</button>
+        </section>
+
     </main>
-  </body>
+</body>
+
 </html>
