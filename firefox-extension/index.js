@@ -44,7 +44,9 @@ async function init()
     document.getElementById("following-page-button").addEventListener("click", () => { swap_page("following-page"); });
     document.getElementById("recommended-page-button").addEventListener("click", () => { swap_page("recommended-page"); });
     document.getElementById("settings-menu-button").addEventListener("click", toggle_settings_menu);
+    
     document.getElementById("load-more-recommended").addEventListener("click", get_recommended_channels);
+    
     document.getElementById("send-button").addEventListener("click", () => send_chat());
     document.getElementById("chat-input").addEventListener("keydown", (keyboard_event) => { if (keyboard_event.key === "Enter" && !keyboard_event.shiftKey) send_chat(); });
 

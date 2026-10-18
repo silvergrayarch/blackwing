@@ -22,11 +22,13 @@ const settings_context = {
 async function init()
 {
    settings_context.storage = await load('settings.json', { autoSave: true });
+   document.getElementById("load-more").addEventListener("click", get_recommended_channels);
+
 }
 
 async function get_filter(filter)
 {
-    return awaitsettings_context.storage.get(filter);
+    return await settings_context.storage.get(filter);
 }
 
 function parse_keywords(value)
