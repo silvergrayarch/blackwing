@@ -34,88 +34,66 @@ export class Twitch
         return this.x_device_id;
     }
 
-
     async get_client_integrity_token()
     {
-        if (this.client_integrity_token) return this.client_integrity_token;
+        if (!(this.integrity_expiration < Date.now()) && this.client_integrity_token) return await this.client_integrity_token;
 
-        const current_tab = await browser.tabs.getCurrent();
+        this.integrity_expiration = Infinity;
 
-        // @SOURCE streamlink 
-        // @HREF https://github.com/streamlink/streamlink/blob/master/src/streamlink/plugins/twitch.py
-        // @LICENSE BSD-2-Clause 
-        // @FILE licenses/streamlink-sourceline-LICENSE
-        // @CREDIT Copyright (c) 2011-2016, Christopher Rosell
-
-        const page_code = `(() => {return new Promise((resolve, reject) =>{function configureKPSDK() { window.KPSDK.configure([{ "protocol": "https:", "method": "POST", "domain": "gql.twitch.tv", "path": "/integrity" }]); } async function fetchIntegrity(){const resp = await window.fetch("https://gql.twitch.tv/integrity", { "headers": { "Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko", "Authorization": "OAuth ${await this.get_auth_token()}", "Content-Type": "application/json", "Accept": "application/json", "X-Device-Id": "${await this.get_x_device_id()}" }, "body": null, "method": "POST", "mode": "cors", "credentials": "omit" }); if (resp.status !== 200){throw new Error(\`Unexpected integrity response status code \${resp.status}\`);} return JSON.stringify(await resp.json());} document.addEventListener("kpsdk-load", configureKPSDK, { once: true }); document.addEventListener("kpsdk-ready", () => fetchIntegrity().then(resolve, reject), { once: true }); const script = document.createElement("script"); script.addEventListener("error", reject); script.src = "https://k.twitchcdn.net/149e9513-01fa-4fb0-aad4-566afd725d1b/2d206a39-8ed7-437e-a3be-862e0f06eea3/p.js"; document.body.appendChild(script);});}) ().then((token) => window.postMessage({ blackwing_integrity: true, token }, "*"), (error) => window.postMessage({ blackwing_integrity: true, error: String(error) }, "*"));`;
-
-        // @END streamlink
-
-        const frame_code = `new Promise((resolve, reject) =>
+        this.client_integrity_token = (async () =>
         {
-            const timeout_id = setTimeout(() => reject(new Error("Integrity token timed out")), 20000);
-
-            window.addEventListener("message", (event) =>
-            {
-                if (event.source !== window || !event.data?.blackwing_integrity) return;
-                clearTimeout(timeout_id);
-                if (event.data.error) reject(new Error(event.data.error));
-                else resolve(event.data.token);
+            const response = await window.fetch("https://gql.twitch.tv/integrity", {
+                method: "POST",
+                headers: {
+                    "Referer": "https://www.twitch.tv",
+                    "Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+                    "Authorization": `OAuth ${await this.get_auth_token()}`,
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "X-Device-Id": await this.get_x_device_id()
+                },
             });
 
-            const script = document.createElement("script");
-            script.textContent = ${JSON.stringify(page_code)};
-            document.documentElement.appendChild(script);
-        })`;
-
-        const request_filter = { urls: ["https://www.twitch.tv/*"], types: ["sub_frame"], tabId: current_tab.id };
-
-        // replace the page with an empty document so Twitch's app never loads
-        function swap_body_for_empty_document(details)
-        {
-            const response_filter = browser.webRequest.filterResponseData(details.requestId);
-            response_filter.ondata = () => { };
-            response_filter.onstop = () =>
+            if (response.status !== 200)
             {
-                response_filter.write(new TextEncoder().encode("<!doctype html><html><head></head><body></body></html>"));
-                response_filter.close();
-            };
-        }
+                throw new Error(`Unexpected integrity response status ${response.status}`);
+            }
 
-        // twitch refuses to be framed, so strip the headers that block it
-        function strip_frame_blocking_headers(details)
-        {
-            return {
-                responseHeaders: details.responseHeaders.filter((header) =>
-                    !["x-frame-options", "content-security-policy"].includes(header.name.toLowerCase()))
-            };
-        }
+            const { token, expiration } = await response.json();
+            this.integrity_expiration = expiration;
+            return token;
+        })();
 
-        browser.webRequest.onBeforeRequest.addListener(swap_body_for_empty_document, request_filter, ["blocking"]);
-        browser.webRequest.onHeadersReceived.addListener(strip_frame_blocking_headers, request_filter, ["blocking", "responseHeaders"]);
-
-        const integrity_frame = document.createElement("iframe");
-        integrity_frame.style.display = "none";
-
-
-        await new Promise((resolve, reject) =>
-        {
-            integrity_frame.addEventListener("load", resolve, { once: true });
-            integrity_frame.addEventListener("error", reject, { once: true });
-            integrity_frame.src = "https://www.twitch.tv/";
-            document.body.appendChild(integrity_frame);
-        });
-
-        const all_frames = await browser.webNavigation.getAllFrames({ tabId: current_tab.id });
-        const twitch_frame = all_frames.find((frame) => frame.url.startsWith("https://www.twitch.tv/"));
-        if (!twitch_frame) throw new Error("Twitch integrity frame not found");
-        this.client_integrity_token = JSON.parse((await browser.tabs.executeScript(current_tab.id, { frameId: twitch_frame.frameId, code: frame_code }))[0]).token;
-        browser.webRequest.onBeforeRequest.removeListener(swap_body_for_empty_document);
-        browser.webRequest.onHeadersReceived.removeListener(strip_frame_blocking_headers);
-
-        integrity_frame.remove();
-        return this.client_integrity_token;
+        return await this.client_integrity_token;
     }
+    // async get_client_integrity_token()
+    // {
+    //     if (!(this.integrity_expiration < Date.now()) && this.client_integrity_token) return this.client_integrity_token;
+
+    //     const response = await window.fetch("https://gql.twitch.tv/integrity", {
+    //         method: "POST",
+    //         headers: {
+    //             "Origin": "https://www.twitch.tv",
+    //             "Referer": "https://www.twitch.tv",
+    //             "Client-ID": "kimne78kx3ncx6brgo4mv6wki5h1ko",
+    //             "Authorization": `OAuth ${await this.get_auth_token()}`,
+    //             "Content-Type": "application/json",
+    //             "Accept": "application/json",
+    //             "X-Device-Id": await this.get_x_device_id()
+    //         },
+    //     });
+
+    //     if (response.status !== 200)
+    //     {
+    //         throw new Error(`Unexpected integrity response status ${response.status}`);
+    //     }
+
+    //     const { token, expiration } = await response.json();
+    //     this.client_integrity_token = token;
+    //     this.integrity_expiration = expiration;
+    //     console.log(expiration);
+    //     return this.client_integrity_token;
+    // }
 
 
     async gql_request(operations)
