@@ -24,13 +24,7 @@ body header {
     background-color: var(--gray-2);
 }
 
-.logo {
-    width: 2.5em;
-    height: 2.5em;
-    padding-left: 10px;
-    padding-right: 10px;
-    object-fit: contain;
-}
+
 
 header button {
     border: none;

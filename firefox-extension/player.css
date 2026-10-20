@@ -1,0 +1,91 @@
+body {
+    height: 100vh;
+    width: 100%;
+    color: var(--white-1);
+    box-sizing: border-box;
+    background: var(--black-2);
+}
+
+main {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 71px);
+}
+
+input {
+    width: 100%;
+    height: 42px;
+    padding: 10px;
+    outline: none;
+    border-radius: 6px;
+    margin-bottom: 10px;
+    color: var(--white-1);
+    box-sizing: border-box;
+    background: var(--black-2);
+    border: 1px solid var(--gray-3);
+}
+
+video#video-player {
+    width: 100%;
+    resize: 1198px;
+}
+
+footer {
+    top: 0;
+    height: 38px;
+    display: flex;
+    margin-top: 0;
+    padding-top: 10px;
+    width: calc(100vw - 20px);
+}
+
+footer #send-button {
+    border: none;
+    cursor: pointer;
+    font-size: 1.5em;
+    margin-left: 6px;
+    border-radius: 6px;
+    color: var(--white-1);
+    background: var(--purple-1);
+}
+
+#chat-messages
+{
+    margin-top: 10px;
+    min-height: 0;
+    overflow-y: scroll;
+}
+
+.chat-message {
+    gap: 12px;
+    padding: 8px 16px;
+    border-radius: 4px;
+}
+
+.chat-message header {
+    display: flex;
+    align-items: flex-start;
+    background-color: transparent;
+}
+
+.chat-message header img {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    object-fit: cover;
+    border-radius: 50%;
+    background: var(--gray-3);
+}
+
+.chat-message header span {
+    min-width: 0;
+    line-height: 32px;
+    margin-left: 8px;
+    overflow-wrap: anywhere;
+}
+
+.chat-message p {
+    margin-top: 16px;
+    margin-left: 40px;
+}

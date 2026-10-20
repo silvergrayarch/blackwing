@@ -9,7 +9,7 @@ async function init()
     blackwing.get_followed_channels();
     blackwing.get_recommended_channels();
 
-    // document.getElementById("load-more").addEventListener("click", get_recommended_channels);
+    document.getElementById("load-more").addEventListener("click", blackwing.get_recommended_channels);
     window.setInterval(async () => { document.getElementById("followed-channels").innerHTML = ""; await blackwing.get_followed_channels(); }, 90000);
 }
 
@@ -110,9 +110,8 @@ class Blackwing
             const open = document.createElement("a");
             open.className = "open";
             open.textContent = "Open Stream";
-            open.href=`https://www.twitch.tv/${username}`;
-            open.target="_blank";
-            open.rel="noopener noreferrer";
+
+            open.href = `player.html?stream=${username.textContent.toLowerCase()}`;
             stream_card.appendChild(open);
 
             parent.appendChild(stream_card);
@@ -343,10 +342,10 @@ class Blackwing
 
     async get_recommended_channels()
     {
-        const load_more_button = document.getElementById("load-more");
+        const load_more = document.getElementById("load-more");
 
-        if (load_more_button.disabled) return;
-        load_more_button.disabled = true;
+        if (load_more.disabled) return;
+        load_more.disabled = true;
 
         const recommended_channels = document.getElementById("recommended-channels");
 
@@ -421,10 +420,10 @@ class Blackwing
             }
         }
 
-        load_more_button.disabled = false;
+        load_more.disabled = false;
 
         // when every game has been fully exhausted hide the Load More button
-        load_more_button.hidden = this.nodes.length > 0 && this.nodes.every(node => this.states.get(node.slug).finished);
+        load_more.hidden = this.nodes.length > 0 && this.nodes.every(node => this.states.get(node.slug).finished);
 
     }
 
